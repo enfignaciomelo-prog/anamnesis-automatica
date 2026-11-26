@@ -1,8 +1,15 @@
 import { useEffect, useState } from "react";
 import type { ImportAnalysis, InterviewSummary, SessionInfo, TemplateSummary } from "../shared/types";
-import { api, ApiError } from "./api";
+import { accounts, api, ApiError, type ListFilter } from "./api";
 import { InterviewScreen } from "./Interview";
 import { PrivacyScreen } from "./Privacy";
+import {
+  clearLocalData,
+  endSession,
+  installLifecycleChecks,
+  setSession as setSessionClock,
+  useSessionState,
+} from "./session";
 import { TemplateEditorScreen, TemplatesScreen } from "./Templates";
 
 type View =
@@ -13,46 +20,108 @@ type View =
   | { name: "template"; id: string }
   | { name: "import"; analysis: ImportAnalysis };
 
+const EXIT_MESSAGES: Record<string, string> = {
+  manual: "Cerraste la sesión. Los datos temporales de este dispositivo se limpiaron.",
+  sesion_vencida: "La sesión venció en el corte diario de las 23:59 (hora de Chile). Se limpiaron los datos temporales.",
+  corte_diario: "La sesión venció en el corte diario de las 23:59 (hora de Chile). Se limpiaron los datos temporales.",
+  vencimiento: "La sesión venció. Se limpiaron los datos temporales de este dispositivo.",
+  vencimiento_sin_conexion: "La sesión venció sin conexión. Se limpiaron los datos temporales de este dispositivo.",
+  bloqueo_inactividad: "La sesión se bloqueó por inactividad. Se limpiaron los datos temporales.",
+  otra_pestana: "La sesión se cerró en otra pestaña. Se limpiaron los datos temporales.",
+  sin_sesion: "Tu sesión ya no es válida. Inicia sesión de nuevo.",
+};
+
 export function App() {
   const [session, setSession] = useState<SessionInfo | null | undefined>(undefined);
+  const [authMode, setAuthMode] = useState<"demo" | "cuentas">("demo");
   const [view, setView] = useState<View>({ name: "home" });
+  const params = new URLSearchParams(location.search);
+  const exitReason = params.get("salida");
+  const resetToken = location.pathname === "/restablecer" ? params.get("token") : null;
+  const resetError = location.pathname === "/restablecer" ? params.get("error") : null;
 
   useEffect(() => {
-    api.session().then(setSession, () => setSession(null));
+    // Antes de mostrar datos clínicos se comprueba la sesión con el servidor.
+    api.health().then((h) => setAuthMode(h.auth), () => undefined);
+    api.session().then(
+      (s) => {
+        setSessionClock(s);
+        setSession(s);
+      },
+      () => {
+        // Sin sesión válida: se limpia lo que haya quedado de usos o versiones anteriores.
+        void clearLocalData();
+        setSession(null);
+      },
+    );
   }, []);
 
-  if (session === undefined) return <main className="center muted">Cargando…</main>;
+  useEffect(() => {
+    if (!session) return;
+    installLifecycleChecks((s) => {
+      if (s) setSession(s);
+    });
+  }, [session === null || session === undefined]);
+
+  const logged = (s: SessionInfo) => {
+    history.replaceState(null, "", "/");
+    setSessionClock(s);
+    setSession(s);
+  };
+
+  if (session === undefined) return <main className="center muted">Comprobando la sesión…</main>;
   if (view.name === "privacy") return <PrivacyScreen onBack={() => setView({ name: "home" })} />;
-  if (!session)
-    return <Welcome onLogin={setSession} onPrivacy={() => setView({ name: "privacy" })} />;
-  if (view.name === "interview")
-    return <InterviewScreen id={view.id} session={session} onExit={() => setView({ name: "home" })} />;
-  if (view.name === "templates")
+  if (!session) {
+    if (resetToken || resetError) return <ResetPassword token={resetToken} error={resetError} />;
     return (
+      <Welcome
+        authMode={authMode}
+        onLogin={logged}
+        notice={
+          params.get("verificado") === "1"
+            ? "Correo verificado. Ya puedes iniciar sesión."
+            : exitReason
+              ? (EXIT_MESSAGES[exitReason] ?? EXIT_MESSAGES.sin_sesion)
+              : null
+        }
+        onPrivacy={() => setView({ name: "privacy" })}
+      />
+    );
+  }
+  const shell = (content: React.ReactNode) => (
+    <>
+      <SessionBanner />
+      {content}
+    </>
+  );
+  if (view.name === "interview")
+    return shell(<InterviewScreen id={view.id} session={session} onExit={() => setView({ name: "home" })} />);
+  if (view.name === "templates")
+    return shell(
       <TemplatesScreen
         onBack={() => setView({ name: "home" })}
         onOpen={(id) => setView({ name: "template", id })}
         onImported={(analysis) => setView({ name: "import", analysis })}
-      />
+      />,
     );
   if (view.name === "template" || view.name === "import")
-    return (
+    return shell(
       <TemplateEditorScreen
         key={view.name === "template" ? view.id : view.analysis.importId}
         id={view.name === "template" ? view.id : undefined}
         analysis={view.name === "import" ? view.analysis : undefined}
         onBack={() => setView({ name: "templates" })}
         onSaved={(id) => setView({ name: "template", id })}
-      />
+      />,
     );
-  return (
+  return shell(
     <Home
       session={session}
-      onSession={setSession}
+      onSession={(s) => (s ? logged(s) : setSession(null))}
       onOpen={(id) => setView({ name: "interview", id })}
       onPrivacy={() => setView({ name: "privacy" })}
       onTemplates={() => setView({ name: "templates" })}
-    />
+    />,
   );
 }
 
@@ -64,41 +133,245 @@ export function DemoNotice() {
   );
 }
 
-function Welcome({ onLogin, onPrivacy }: { onLogin: (s: SessionInfo) => void; onPrivacy: () => void }) {
+/** Aviso previo al corte diario e indicador de guardado. */
+function SessionBanner() {
+  const st = useSessionState();
+  return st.warning ? (
+    <p className="cutoff-warning" role="alert">
+      {st.warning}
+    </p>
+  ) : null;
+}
+
+export function SaveIndicator() {
+  const { save } = useSessionState();
+  if (save.kind === "inactivo") return null;
+  const text =
+    save.kind === "guardando"
+      ? "Guardando…"
+      : save.kind === "guardado"
+        ? `Guardado ${save.at.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}`
+        : "Error al guardar";
+  return (
+    <span className={`save save-${save.kind}`} role="status" title={save.kind === "error" ? save.message : undefined}>
+      {text}
+    </span>
+  );
+}
+
+function Welcome({
+  authMode,
+  onLogin,
+  onPrivacy,
+  notice,
+}: {
+  authMode: "demo" | "cuentas";
+  onLogin: (s: SessionInfo) => void;
+  onPrivacy: () => void;
+  notice: string | null;
+}) {
   const [error, setError] = useState<string | null>(null);
-  const login = (p: "demo-a" | "demo-b") =>
-    api.demoLogin(p).then(onLogin, (e: ApiError) => setError(e.message));
+  const [info, setInfo] = useState<string | null>(notice);
+  const [mode, setMode] = useState<"entrar" | "crear" | "recuperar">("entrar");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const run = async (f: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await f();
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (mode === "entrar")
+      void run(async () => {
+        await accounts.signIn(email, password);
+        onLogin(await api.session());
+      });
+    else if (mode === "crear")
+      void run(async () => {
+        await accounts.signUp(name, email, password);
+        setInfo("Te enviamos un correo para verificar tu cuenta. Ábrelo y luego inicia sesión.");
+        setMode("entrar");
+        setPassword("");
+      });
+    else
+      void run(async () => {
+        await accounts.requestReset(email);
+        setInfo("Si el correo tiene una cuenta, te llegará un enlace para elegir una contraseña nueva.");
+        setMode("entrar");
+      });
+  };
+
   return (
     <main className="welcome">
       <header className="welcome-head">
         <h1>Anamnesis Automática</h1>
         <p className="lede">
-          Escucha la entrevista, transcribe en español y propone cada campo con el fragmento que lo
-          respalda. Tú revisas y confirmas.
+          Escucha la entrevista, transcribe en español y propone cada campo con el fragmento que lo respalda.
+          Tú revisas y confirmas.
         </p>
       </header>
-      <DemoNotice />
-      <section className="panel" aria-labelledby="perfiles">
-        <h2 id="perfiles">Entrar a la demostración</h2>
-        <p className="muted">
-          Dos profesionales ficticios para comprobar que cada uno ve solo sus entrevistas. No se usan
-          contraseñas en esta etapa.
+      {info && (
+        <p className="banner" role="status">
+          {info}
         </p>
-        <div className="stack">
-          <button className="btn primary" onClick={() => login("demo-a")}>
-            Entrar como Profesional Demo A
-          </button>
-          <button className="btn" onClick={() => login("demo-b")}>
-            Entrar como Profesional Demo B
-          </button>
-        </div>
-        {error && <p className="error" role="alert">{error}</p>}
-      </section>
+      )}
+      {authMode === "demo" ? (
+        <>
+          <DemoNotice />
+          <section className="panel" aria-labelledby="perfiles">
+            <h2 id="perfiles">Entrar a la demostración</h2>
+            <p className="muted">
+              Dos profesionales ficticios para comprobar que cada uno ve solo sus entrevistas. No se usan contraseñas en
+              este modo.
+            </p>
+            <div className="stack">
+              <button className="btn primary" onClick={() => run(async () => onLogin(await api.demoLogin("demo-a")))}>
+                Entrar como Profesional Demo A
+              </button>
+              <button className="btn" onClick={() => run(async () => onLogin(await api.demoLogin("demo-b")))}>
+                Entrar como Profesional Demo B
+              </button>
+            </div>
+          </section>
+        </>
+      ) : (
+        <section className="panel" aria-labelledby="acceso">
+          <h2 id="acceso">
+            {mode === "entrar" ? "Iniciar sesión" : mode === "crear" ? "Crear cuenta" : "Recuperar contraseña"}
+          </h2>
+          <p className="muted small">Versión de pruebas: usa solo datos ficticios.</p>
+          <form className="stack" onSubmit={submit}>
+            {mode === "crear" && (
+              <label className="field-label">
+                Nombre
+                <input type="text" autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} />
+              </label>
+            )}
+            <label className="field-label">
+              Correo
+              <input
+                type="email"
+                autoComplete="email"
+                inputMode="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+            {mode !== "recuperar" && (
+              <label className="field-label">
+                Contraseña
+                <input
+                  type="password"
+                  autoComplete={mode === "crear" ? "new-password" : "current-password"}
+                  minLength={10}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+            )}
+            <button className="btn primary" disabled={busy} type="submit">
+              {mode === "entrar" ? "Iniciar sesión" : mode === "crear" ? "Crear cuenta" : "Enviar enlace"}
+            </button>
+          </form>
+          <div className="actions">
+            {mode !== "entrar" && (
+              <button className="link" onClick={() => setMode("entrar")}>
+                Ya tengo cuenta
+              </button>
+            )}
+            {mode !== "crear" && (
+              <button className="link" onClick={() => setMode("crear")}>
+                Crear cuenta
+              </button>
+            )}
+            {mode !== "recuperar" && (
+              <button className="link" onClick={() => setMode("recuperar")}>
+                Olvidé mi contraseña
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
       <button className="link" onClick={onPrivacy}>
         Qué datos se usan y dónde
       </button>
     </main>
   );
+}
+
+function ResetPassword({ token, error }: { token: string | null; error: string | null }) {
+  const [pw, setPw] = useState("");
+  const [msg, setMsg] = useState<string | null>(error ? "El enlace no es válido o ya venció. Pide uno nuevo." : null);
+  const [done, setDone] = useState(false);
+  return (
+    <main className="welcome">
+      <h1>Elegir contraseña nueva</h1>
+      {msg && (
+        <p className={done ? "banner" : "error"} role="alert">
+          {msg}
+        </p>
+      )}
+      {token && !done && (
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            accounts.resetPassword(token, pw).then(
+              () => {
+                setDone(true);
+                setMsg("Contraseña actualizada. Por seguridad se cerraron tus otras sesiones.");
+              },
+              (e: ApiError) => setMsg(e.message),
+            );
+          }}
+        >
+          <label className="field-label">
+            Contraseña nueva (mínimo 10 caracteres)
+            <input type="password" autoComplete="new-password" minLength={10} required value={pw} onChange={(e) => setPw(e.target.value)} />
+          </label>
+          <button className="btn primary" type="submit">
+            Guardar contraseña
+          </button>
+        </form>
+      )}
+      <a className="link" href="/">
+        Ir a iniciar sesión
+      </a>
+    </main>
+  );
+}
+
+const STATE_LABEL: Record<string, string> = {
+  preparada: "Borrador",
+  escuchando: "Borrador (escuchando)",
+  pausada: "Borrador (pausada)",
+  detenida: "Borrador",
+  finalizada: "Revisada",
+};
+
+function fmtDays(m: number) {
+  if (m < 60) return `${m} minutos`;
+  if (m < 24 * 60) return `${m / 60} ${m === 60 ? "hora" : "horas"}`;
+  const d = m / (24 * 60);
+  return `${d} ${d === 1 ? "día" : "días"}`;
 }
 
 function Home({
@@ -117,32 +390,38 @@ function Home({
   const [list, setList] = useState<InterviewSummary[] | null>(null);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [templateId, setTemplateId] = useState("generica");
+  const [filter, setFilter] = useState<ListFilter>({ estado: "" });
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.list().then(setList, (e: ApiError) => {
-      if (e.status === 401) onSession(null);
-      else setError(e.message);
-    });
+    api.list(filter).then(setList, (e: ApiError) => e.status && setError(e.message));
+  }, [filter]);
+  useEffect(() => {
     api.templates().then(setTemplates, () => undefined);
-  }, [onSession]);
+  }, []);
 
-  const create = () => api.create(templateId).then((s) => onOpen(s.id), (e: ApiError) => setError(e.message));
+  const create = () => api.create(templateId).then((s) => onOpen(s.id), (e: ApiError) => e.status !== undefined && setError(e.message));
 
   return (
     <main className="home">
       <header className="home-head">
         <div>
-          <h1>Entrevistas</h1>
-          <p className="muted">{session.professional.name}</p>
+          <h1>Mis anamnesis</h1>
+          <p className="muted">
+            {session.professional.name}
+            {session.professional.email ? `, ${session.professional.email}` : ""}
+          </p>
         </div>
-        <button className="btn small" onClick={() => api.logout().then(() => onSession(null))}>
-          Salir
-        </button>
+        <div className="head-actions">
+          <SaveIndicator />
+          <button className="btn small" onClick={() => void endSession("manual", true, true)}>
+            Cerrar sesión
+          </button>
+        </div>
       </header>
       {session.demo && <DemoNotice />}
       <label className="field-label" htmlFor="plantilla">
-        Plantilla para la nueva entrevista
+        Plantilla para la nueva anamnesis
       </label>
       <select id="plantilla" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
         {(templates.length ? templates : [{ id: "generica", name: "Anamnesis general", version: 1 }]).map((t) => (
@@ -157,38 +436,95 @@ function Home({
       <button className="btn wide-secondary" onClick={onTemplates}>
         Plantillas
       </button>
-      {error && <p className="error" role="alert">{error}</p>}
-      <section aria-label="Tus entrevistas">
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+
+      <section aria-labelledby="buscar">
+        <h2 id="buscar">Buscar</h2>
+        <div className="filters">
+          <label className="field-label">
+            Estado
+            <select value={filter.estado} onChange={(e) => setFilter({ ...filter, estado: e.target.value as ListFilter["estado"] })}>
+              <option value="">Todas</option>
+              <option value="borrador">Borrador</option>
+              <option value="revisada">Revisada</option>
+            </select>
+          </label>
+          <label className="field-label">
+            Desde
+            <input type="date" value={filter.desde ?? ""} onChange={(e) => setFilter({ ...filter, desde: e.target.value || undefined })} />
+          </label>
+          <label className="field-label">
+            Hasta
+            <input type="date" value={filter.hasta ?? ""} onChange={(e) => setFilter({ ...filter, hasta: e.target.value || undefined })} />
+          </label>
+        </div>
+      </section>
+
+      <section aria-label="Tus anamnesis">
         {list === null ? (
           <p className="muted">Cargando…</p>
         ) : list.length === 0 ? (
-          <p className="empty">Aún no tienes entrevistas. Crea una para probar el flujo completo.</p>
+          <p className="empty">No hay anamnesis con estos filtros.</p>
         ) : (
           <ul className="interview-list">
             {list.map((i) => (
               <li key={i.id}>
                 <button className="row-btn" onClick={() => onOpen(i.id)}>
-                  <span>{i.title}</span>
-                  <span className={`pill st-${i.status}`}>{STATUS_TEXT[i.status]}</span>
+                  <span>
+                    {i.title}
+                    <span className="muted small block">
+                      Modificada {new Date(i.updatedAt).toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" })}
+                    </span>
+                  </span>
+                  <span className={`pill st-${i.status}`}>{STATE_LABEL[i.status]}</span>
                 </button>
               </li>
             ))}
           </ul>
         )}
       </section>
-      <section className="panel" aria-labelledby="ret">
-        <h2 id="ret">Retención</h2>
+
+      <section className="panel" aria-labelledby="config">
+        <h2 id="config">Configuración</h2>
+        <p className="info-box">
+          Las anamnesis guardadas permanecen en tu cuenta. A las 23:59, hora de Chile, vence la sesión y se limpian los datos
+          temporales cuando la aplicación está activa, o al volver a abrirla. Los documentos descargados deben eliminarse
+          manualmente.
+        </p>
+        <p className="muted small">
+          Esta sesión vence a las{" "}
+          {new Date(session.cutoffAt).toLocaleString("es-CL", { timeZone: "America/Santiago", dateStyle: "short", timeStyle: "short" })}{" "}
+          (hora de Chile).
+        </p>
+        <label className="field-label" htmlFor="inactividad">
+          Bloquear por inactividad después de
+        </label>
+        <select
+          id="inactividad"
+          value={session.idleMinutes}
+          onChange={(e) => api.setSettings({ idleMinutes: Number(e.target.value) }).then(onSession, () => undefined)}
+        >
+          {session.idleOptions.map((m) => (
+            <option key={m} value={m}>
+              {m} minutos
+            </option>
+          ))}
+        </select>
         <label className="field-label" htmlFor="retencion">
-          Las entrevistas se eliminan del servidor tras este tiempo sin actividad
+          Eliminar del servidor las anamnesis sin actividad después de
         </label>
         <select
           id="retencion"
           value={session.retentionMinutes}
-          onChange={(e) => api.setRetention(Number(e.target.value)).then(onSession)}
+          onChange={(e) => api.setSettings({ retentionMinutes: Number(e.target.value) }).then(onSession, () => undefined)}
         >
           {session.retentionOptions.map((m) => (
             <option key={m} value={m}>
-              {m < 60 ? `${m} minutos` : `${m / 60} ${m === 60 ? "hora" : "horas"}`}
+              {fmtDays(m)}
             </option>
           ))}
         </select>

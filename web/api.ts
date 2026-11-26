@@ -91,7 +91,6 @@ export const api = {
   session: () => call<SessionInfo>("GET", "/api/session"),
   demoLogin: (perfil: "demo-a" | "demo-b") =>
     call<{ ok: true }>("POST", "/api/demo/session", { perfil }).then(() => call<SessionInfo>("GET", "/api/session")),
-  setRetention: (retentionMinutes: number) => trackSave(call<SessionInfo>("PATCH", "/api/settings", { retentionMinutes })),
   setSettings: (patch: { retentionMinutes?: number; idleMinutes?: number }) =>
     save<SessionInfo>("PATCH", "/api/settings", patch),
   list: (f: ListFilter = {}) => {

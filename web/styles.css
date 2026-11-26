@@ -831,3 +831,76 @@ label.btn {
 .editor {
   max-width: 820px;
 }
+
+/* Sesión y guardado */
+html.revalidando #root {
+  visibility: hidden;
+}
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.save {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--slate);
+}
+.save-guardado {
+  color: var(--ok);
+}
+.save-error {
+  color: var(--listen);
+}
+.cutoff-warning {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  margin: 0;
+  padding: 0.7rem max(16px, env(safe-area-inset-left));
+  background: #fff4dc;
+  border-bottom: 2px solid var(--rev);
+  font-weight: 600;
+}
+.draft-state {
+  min-height: 1.2em;
+  font-size: 0.82rem;
+  color: var(--slate);
+  margin: 0.25rem 0;
+}
+.ds-guardado {
+  color: var(--ok);
+}
+.ds-error {
+  color: var(--listen);
+  font-weight: 600;
+}
+.info-box {
+  padding: 0.7rem 0.8rem;
+  border-left: 4px solid var(--prop);
+  background: var(--surface);
+  max-width: 62ch;
+}
+.filters {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 0.75rem;
+}
+@media (min-width: 640px) {
+  .filters {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+input[type="email"],
+input[type="password"],
+input[type="date"] {
+  font: 16px/1.4 var(--ui);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-small);
+  padding: 0.6rem;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 0.25rem;
+}

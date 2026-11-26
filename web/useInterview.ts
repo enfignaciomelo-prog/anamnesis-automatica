@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { InterimEvent, InterviewSnapshot } from "../shared/types";
 import { pauseInBackground } from "./api";
+import { onEnd, verify } from "./session";
 
 export type Connection = "conectando" | "conectado" | "reconectando" | "sin_conexion";
 
@@ -35,6 +36,12 @@ export function useInterview(id: string, onDeleted: () => void) {
       es.close();
       deletedRef.current();
     });
+    // El servidor cerró la sesión (corte, inactividad u otra pestaña): revalidar y limpiar.
+    es.addEventListener("session_ended", () => {
+      es.close();
+      void verify("servidor");
+    });
+    const unregister = onEnd(() => es.close());
     const offline = () => setConn("sin_conexion");
     const online = () => setConn("reconectando");
     window.addEventListener("offline", offline);
@@ -51,6 +58,7 @@ export function useInterview(id: string, onDeleted: () => void) {
     document.addEventListener("visibilitychange", hide);
     window.addEventListener("pagehide", pagehide);
     return () => {
+      unregister();
       es.close();
       window.removeEventListener("offline", offline);
       window.removeEventListener("online", online);
