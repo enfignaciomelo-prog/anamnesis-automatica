@@ -79,7 +79,7 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 
 ## Pruebas
 
-- `npm test`: 36 pruebas unitarias y de integración (extractor, API, autorización,
+- `npm test`: 41 pruebas unitarias y de integración (extractor y casos clínicos pedidos, API, autorización,
   exportación, retención, registros, service worker, importación, versionado,
   exportación en formato original, macros, OCR).
 - `npm run test:e2e`: flujo de demostración y flujo de plantillas con Playwright en

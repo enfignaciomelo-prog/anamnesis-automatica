@@ -39,7 +39,7 @@ class Client {
         ...(this.cookie ? { Cookie: this.cookie } : {}),
         ...headers,
       },
-      body: body === undefined ? undefined : isBuf ? (body as Buffer) : JSON.stringify(body),
+      body: body === undefined ? undefined : isBuf ? new Uint8Array(body as Buffer) : JSON.stringify(body),
     });
     const sc = res.headers.get("set-cookie");
     if (sc) this.cookie = sc.split(";")[0];

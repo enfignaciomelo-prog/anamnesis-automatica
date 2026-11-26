@@ -88,7 +88,7 @@ const FREQ_RE =
 /** Divide un segmento en cláusulas conservando el texto original. */
 export function splitClauses(text: string): string[] {
   return text
-    .split(/(?<=[.;!?])\s+|,\s*pero\s+|\s+pero\s+|,\s*(?=ahora\b|actualmente\b)|,\s*y\s+|\s+y\s+(?=mi\s|su\s)/i)
+    .split(/(?<=[.;!?])\s+|,\s*pero\s+|\s+pero\s+|,\s*(?=ahora\b|actualmente\b|yo\b)|,\s*y\s+|\s+y\s+(?=mi\s|su\s)/i)
     .map((c) => c.trim().replace(/[.;]+$/, ""))
     .filter((c) => c.length > 0);
 }
@@ -157,6 +157,8 @@ export function extractDemo(
       });
     }
 
+    // Término clínico del último antecedente familiar («Mi mamá tiene diabetes, yo no»).
+    let familyTerm: { concept: string; term: string } | null = null;
     splitClauses(seg.text).forEach((rawClause, ci) => {
       let clause = rawClause;
       let corrected: ProposalItem["corrected"];
@@ -170,6 +172,26 @@ export function extractDemo(
       }
       const n = norm(clause);
       const family = FAMILY_RE.test(n);
+
+      // Negación elíptica del paciente tras un antecedente familiar: «…, yo no».
+      if (/^yo no\b/.test(n) && familyTerm && fieldIds.has(familyTerm.concept)) {
+        const def = byConcept.get(familyTerm.concept)!;
+        items.push({
+          id: `${seg.id}:${ci}:${def.id}`,
+          fieldId: def.id,
+          value: `Niega ${familyTerm.term} (lo refiere en un familiar, no en sí mismo/a)`,
+          classification: "negado",
+          evidence: [ev(seg, seg.text)],
+          reasons: [...baseReasons],
+        });
+        familyTerm = null;
+        return;
+      }
+      if (family) {
+        const hit = LEXICON.find((e) => e.field === "morbidos" && e.re.test(n));
+        const term = hit ? n.match(hit.re)?.[0] : undefined;
+        familyTerm = hit && term ? { concept: "morbidos", term } : null;
+      }
 
       // Vocativos o muletillas sueltas («Mamá», «Ah») no son información.
       if (wordCount(clause) <= 1 && !/^(si|no)$/.test(n.replace(/[^a-z]/g, ""))) return;
