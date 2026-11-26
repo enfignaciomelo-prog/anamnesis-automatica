@@ -69,9 +69,11 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Aviso 5 minutos antes del corte | ✅ | Intenta guardar los borradores e informa si falla; no retrasa el cierre. |
 | Bloqueo por inactividad configurable | ✅ | 5, 15, 30 o 60 minutos; exigido en servidor; no bloquea mientras se escucha. |
 | Cierre manual y entre pestañas | ✅ | Propagado a otras pestañas; cancela peticiones; una respuesta tardía no repuebla datos; «Atrás» no muestra contenido clínico (E2E). |
+| Canales en vivo ligados a su sesión | ✅ | El servidor cierra cada canal al llegar el corte (temporizador del servidor), si la sesión se revoca por otra vía (p. ej., cambio de contraseña) o por inactividad, sin esperar otra petición. Cerrar sesión en un dispositivo no cierra los de otro (probado en memoria y PostgreSQL). |
+| TLS con PostgreSQL | ✅ | En producción: TLS obligatorio con verificación del certificado (`DATABASE_CA_CERT`); se rechazan `DATABASE_SSL=disable`, `sslmode` que no verifica y cualquier `rejectUnauthorized:false`. Sin TLS solo para PostgreSQL local de pruebas. |
 | Cookies | ✅ | HttpOnly, SameSite, Secure con HTTPS; verificación de origen en cambios. |
 | Sin datos clínicos en el navegador | ✅ | Sin localStorage, sessionStorage ni IndexedDB; caché solo pública; limpieza de versiones anteriores; `Clear-Site-Data` al cerrar. |
-| Retención y eliminación configurables | ✅ | Modo cuentas: 7, 30, 90 o 365 días sin actividad; botón para eliminar. |
+| Eliminación del historial en el servidor | ✅ | **Desactivada por defecto**: las anamnesis guardadas, incluidas las finalizadas, no se eliminan automáticamente. Solo se activa si el profesional la configura y la confirma (30, 90 o 365 días sin actividad). Independiente de la limpieza local. Botón para eliminar una anamnesis. |
 | Audio no guardado | ✅ | No existe audio todavía; el diseño no lo almacena. |
 | Sin contenido clínico en registros | ✅ | Probado. |
 | Explicación de datos por proveedor | ✅ | Incluye Supabase y Resend. |

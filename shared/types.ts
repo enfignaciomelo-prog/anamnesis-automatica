@@ -176,7 +176,8 @@ export interface InterviewSnapshot extends InterviewSummary {
   pauseReason: string | null;
   finalizedAt: string | null;
   demo: boolean;
-  expiresAt: string;
+  /** Eliminación automática del servidor; null si el profesional no la configuró. */
+  autoDeleteAt: string | null;
 }
 
 export interface InterimEvent {
@@ -189,8 +190,9 @@ export interface SessionInfo {
   demo: boolean;
   /** "demo" (perfiles ficticios) o "cuentas" (correo y contraseña). */
   authMode: "demo" | "cuentas";
-  retentionMinutes: number;
-  retentionOptions: number[];
+  /** Eliminación automática del historial (días sin actividad); null = desactivada. */
+  historyRetentionDays: number | null;
+  historyRetentionOptions: number[];
   idleMinutes: number;
   idleOptions: number[];
   /** Corte diario (23:59 America/Santiago) de esta sesión. Lo exige el servidor. */

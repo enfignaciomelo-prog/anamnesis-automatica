@@ -23,6 +23,8 @@ export interface AuthGate {
   /** Atiende rutas propias (p. ej., /api/auth/*). Devuelve true si respondió. */
   handle(req: IncomingMessage, res: ServerResponse, url: URL, https: boolean): Promise<boolean>;
   getSession(req: IncomingMessage): Promise<AuthSession | null>;
+  /** ¿La sesión sigue vigente en el servidor? (para cerrar canales abiertos si fue revocada). */
+  isActive(sessionId: string): Promise<boolean>;
   /** Revoca la sesión en el servidor (cierre, corte diario o inactividad). */
   revoke(session: AuthSession): Promise<void>;
   /** Cabeceras Set-Cookie para borrar la cookie de sesión en el navegador. */

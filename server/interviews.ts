@@ -126,7 +126,7 @@ export class InterviewService {
 
   async snapshot(r: InterviewRecord): Promise<InterviewSnapshot> {
     const owner = await this.store.getProfessional(r.ownerId);
-    const ttl = (owner?.retentionMinutes ?? this.config.retentionDefaultMinutes) * 60_000;
+    const days = owner?.historyRetentionDays ?? null;
     return {
       ...this.summary(r),
       template: r.template,
@@ -137,7 +137,7 @@ export class InterviewService {
       pauseReason: r.pauseReason,
       finalizedAt: r.finalizedAt ? new Date(r.finalizedAt).toISOString() : null,
       demo: this.config.demo,
-      expiresAt: new Date(r.lastActivity + ttl).toISOString(),
+      autoDeleteAt: days === null ? null : new Date(r.lastActivity + days * 86_400_000).toISOString(),
     };
   }
 
@@ -243,15 +243,6 @@ export class InterviewService {
       src?.stop();
     }
     logEvent("interview_command", { cmd });
-  }
-
-  /** Pausa toda escucha del profesional (cierre de sesión o vencimiento). */
-  async pauseAll(ownerId: string, reason: string) {
-    for (const r of [...this.live.values()]) {
-      if (r.ownerId !== ownerId || r.status !== "escuchando") continue;
-      this.applyCommand(r, "pausar", reason);
-      await this.commit(r).catch((e) => logError("pause_all", e));
-    }
   }
 
   async setRole(ownerId: string, id: string, speaker: number, role: SpeakerRole) {
@@ -413,17 +404,22 @@ export class InterviewService {
     this.disconnectTimers.set(id, t);
   }
 
-  /** Cierra los canales en vivo de un profesional (cierre de sesión o vencimiento). */
-  closeOwnerStreams(ownerId: string) {
-    for (const [id, r] of [...this.live.entries()]) {
-      if (r.ownerId !== ownerId) continue;
-      for (const res of this.subscribers.get(id) ?? []) {
-        this.write(res, "session_ended", {});
-        res.end();
-      }
-      this.subscribers.delete(id);
-      this.releaseIfIdle(id);
+  /** Pausa las escuchas del profesional que quedaron sin ninguna pantalla conectada. */
+  async pauseOrphaned(ownerId: string, reason: string, also: Iterable<string> = []) {
+    const extra = new Set(also);
+    for (const r of [...this.live.values()]) {
+      if (r.ownerId !== ownerId || r.status !== "escuchando") continue;
+      const watchers = [...(this.subscribers.get(r.id) ?? [])].filter((res) => !res.writableEnded).length;
+      if (watchers === 0 || extra.has(r.id)) await this.pauseFor(ownerId, r.id, reason);
     }
+  }
+
+  /** Pausa una entrevista que escuchaba para una sesión que terminó. */
+  async pauseFor(ownerId: string, id: string, reason: string) {
+    const r = this.live.get(id);
+    if (!r || r.ownerId !== ownerId || r.status !== "escuchando") return;
+    this.applyCommand(r, "pausar", reason);
+    await this.commit(r).catch((e) => logError("pause_session", e));
   }
 
   private broadcast(r: InterviewRecord) {

@@ -53,6 +53,11 @@ export class DemoAuth implements AuthGate {
     return { sessionId: s.id, user: { id: userId, name: DEMO_PROFESSIONALS[userId] }, createdAt: s.createdAt };
   }
 
+  async isActive(sessionId: string) {
+    const s = this.sessions.get(sessionId);
+    return Boolean(s && s.expiresAt >= this.now());
+  }
+
   /** Solo pruebas: retrocede el inicio de una sesión para simular el paso del tiempo. */
   shiftSession(sessionId: string, ms: number) {
     const s = this.sessions.get(sessionId);

@@ -739,8 +739,9 @@ function Review({
 
       <h2>Eliminar</h2>
       <p className="muted small">
-        Se elimina automáticamente el {new Date(snap.expiresAt).toLocaleString("es-CL")} si no hay
-        actividad.
+        {snap.autoDeleteAt
+          ? `Según tu configuración, se eliminará del servidor el ${new Date(snap.autoDeleteAt).toLocaleString("es-CL")} si no hay actividad.`
+          : "Queda guardada en tu cuenta: no se elimina automáticamente."}
       </p>
       <button className="btn danger" onClick={onDelete}>
         Eliminar entrevista ahora

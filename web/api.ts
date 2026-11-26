@@ -91,7 +91,7 @@ export const api = {
   session: () => call<SessionInfo>("GET", "/api/session"),
   demoLogin: (perfil: "demo-a" | "demo-b") =>
     call<{ ok: true }>("POST", "/api/demo/session", { perfil }).then(() => call<SessionInfo>("GET", "/api/session")),
-  setSettings: (patch: { retentionMinutes?: number; idleMinutes?: number }) =>
+  setSettings: (patch: { historyRetentionDays?: number | null; confirmHistoryDeletion?: boolean; idleMinutes?: number }) =>
     save<SessionInfo>("PATCH", "/api/settings", patch),
   list: (f: ListFilter = {}) => {
     const q = new URLSearchParams();

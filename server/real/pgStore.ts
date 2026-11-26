@@ -79,12 +79,12 @@ export class PgStore implements Store {
   readonly kind = "postgres" as const;
   constructor(
     private pool: pg.Pool,
-    private defaults: { retentionMinutes: number; idleMinutes: number },
+    private defaults: { idleMinutes: number },
   ) {}
 
   async getProfessional(id: string): Promise<Professional | undefined> {
     const { rows } = await this.pool.query(
-      `SELECT u.id, u.name, s.retention_minutes, s.idle_minutes
+      `SELECT u.id, u.name, s.history_retention_days, s.idle_minutes
          FROM "user" u LEFT JOIN professional_settings s ON s.user_id = u.id WHERE u.id = $1`,
       [id],
     );
@@ -93,17 +93,17 @@ export class PgStore implements Store {
     return {
       id: r.id,
       name: r.name,
-      retentionMinutes: r.retention_minutes ?? this.defaults.retentionMinutes,
+      historyRetentionDays: r.history_retention_days ?? null,
       idleMinutes: r.idle_minutes ?? this.defaults.idleMinutes,
     };
   }
 
   async upsertProfessional(p: Professional) {
     await this.pool.query(
-      `INSERT INTO professional_settings (user_id, retention_minutes, idle_minutes, updated_at)
+      `INSERT INTO professional_settings (user_id, history_retention_days, idle_minutes, updated_at)
        VALUES ($1, $2, $3, now())
-       ON CONFLICT (user_id) DO UPDATE SET retention_minutes = $2, idle_minutes = $3, updated_at = now()`,
-      [p.id, p.retentionMinutes, p.idleMinutes],
+       ON CONFLICT (user_id) DO UPDATE SET history_retention_days = $2, idle_minutes = $3, updated_at = now()`,
+      [p.id, p.historyRetentionDays, p.idleMinutes],
     );
   }
 
@@ -303,14 +303,16 @@ export class PgStore implements Store {
   }
 
   async sweep(now: number) {
+    // Solo con política explícita del profesional (history_retention_days no nulo).
     const { rows } = await this.pool.query(
       `DELETE FROM interviews i USING (
          SELECT i2.id FROM interviews i2
-           LEFT JOIN professional_settings s ON s.user_id = i2.owner_id
-          WHERE i2.status <> 'escuchando'
-            AND i2.last_activity + make_interval(mins => COALESCE(s.retention_minutes, $2)) < to_timestamp($1 / 1000.0)
+           JOIN professional_settings s ON s.user_id = i2.owner_id
+          WHERE s.history_retention_days IS NOT NULL
+            AND i2.status <> 'escuchando'
+            AND i2.last_activity + make_interval(days => s.history_retention_days) < to_timestamp($1 / 1000.0)
        ) old WHERE i.id = old.id RETURNING i.id`,
-      [now, this.defaults.retentionMinutes],
+      [now],
     );
     // Importaciones vencidas y archivos que ya nadie usa.
     await this.pool.query("DELETE FROM pending_imports WHERE expires_at < to_timestamp($1 / 1000.0)", [now]);

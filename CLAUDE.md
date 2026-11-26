@@ -126,6 +126,13 @@ borrador de anamnesis según la plantilla seleccionada.
   `DEMO_MODE=false`. Migraciones en `server/real/migrations` (esquema `anamnesis`, RLS).
 - **Pruebas:** las E2E son emulación en Chromium con tamaño de iPhone; no
   presentarlas como pruebas en Safari real.
+- **Historial:** la limpieza local nunca elimina datos del servidor. La
+  eliminación automática del historial está desactivada por defecto y solo se
+  activa con configuración y confirmación explícitas del profesional.
+- **Canales en vivo:** ligados a su sesión; el servidor los cierra al corte, al
+  revocarse la sesión o por inactividad, sin depender del navegador.
+- **TLS PostgreSQL:** en producción, verificado con `DATABASE_CA_CERT`; prohibido
+  `rejectUnauthorized:false`, `DATABASE_SSL=disable` y `sslmode` sin verificación.
 
 ## Orden de trabajo vigente
 
@@ -139,7 +146,10 @@ Voz e IA offline: capacidad posterior por evaluar.
 ## Decisiones pendientes (no decidir sin consultar)
 
 - Región del servidor de aplicación (Render no tiene región en Sudamérica).
-- Conservación más allá de la retención configurable.
+- Política institucional de conservación y eliminación del historial (hoy:
+  conservación hasta que el profesional elimine o configure la eliminación).
+- Conector Rayen: después de offline, micrófono y llenado con Claude (se puede
+  investigar antes la opción oficial).
 
 ## Skills del proyecto (`.claude/skills/`)
 

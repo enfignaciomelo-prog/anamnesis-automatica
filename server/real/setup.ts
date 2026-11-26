@@ -12,10 +12,7 @@ export async function setupReal(config: Config): Promise<Required<Pick<AppDeps, 
     config.email!.transport === "prueba" ? new TestMailer() : new ResendMailer(config.email!.resendKey!, config.email!.from!);
   const auth = createBetterAuth(pool, config, mailer);
   await migrate(pool, () => runAuthMigrations(auth));
-  const store = new PgStore(pool, {
-    retentionMinutes: config.retentionDefaultMinutes,
-    idleMinutes: config.idleDefaultMinutes,
-  });
+  const store = new PgStore(pool, { idleMinutes: config.idleDefaultMinutes });
   const gate = new BetterAuthGate(auth, pool, mailer, !config.production);
   return { store, gate, mailer };
 }

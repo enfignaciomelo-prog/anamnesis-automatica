@@ -216,17 +216,45 @@ describe("API", () => {
     if (s.status === "pausada") assert.equal(s.pauseReason, "conexion");
   });
 
-  it("la retención elimina entrevistas vencidas", async () => {
+  it("sin política explícita nunca elimina anamnesis guardadas, aunque estén finalizadas y sean antiguas", async () => {
     const c = await login("demo-b");
-    await c.json("PATCH", "/api/settings", { retentionMinutes: 15 });
+    const id = await fullInterview(c);
+    for (const f of Object.values((await c.json("GET", `/api/interviews/${id}`)).body.fields).filter(
+      (x) => x.status === "requiere_revision",
+    ))
+      await c.json("POST", `/api/interviews/${id}/fields/${f.fieldId}/confirm`, { value: null });
+    assert.equal((await c.json("POST", `/api/interviews/${id}/finalize`, { attested: true })).status, 200);
+    const { body: borrador } = await c.json("POST", "/api/interviews", {});
+    for (const x of [id, borrador.id]) {
+      const r = await app.service.record("demo-b", x);
+      r.lastActivity = Date.now() - 400 * 86_400_000; // 400 días sin actividad
+      await app.store.saveInterview(r);
+    }
+    await app.service.sweep();
+    assert.equal((await c.req("GET", `/api/interviews/${id}`)).status, 200, "finalizada antigua se conserva");
+    assert.equal((await c.req("GET", `/api/interviews/${borrador.id}`)).status, 200, "borrador antiguo se conserva");
+    const s = await c.json("GET", `/api/interviews/${id}`);
+    assert.equal((s.body as unknown as { autoDeleteAt: string | null }).autoDeleteAt, null);
+  });
+
+  it("la eliminación del historial exige configuración explícita y confirmada", async () => {
+    const c = await login("demo-b");
+    // Sin confirmación explícita se rechaza.
+    let r = await c.json("PATCH", "/api/settings", { historyRetentionDays: 30 });
+    assert.equal(r.body.error, "confirmacion_requerida");
+    r = await c.json("PATCH", "/api/settings", { historyRetentionDays: 7, confirmHistoryDeletion: true });
+    assert.equal(r.body.error, "retencion_invalida");
+    r = await c.json("PATCH", "/api/settings", { historyRetentionDays: 30, confirmHistoryDeletion: true });
+    assert.equal(r.status, 200);
     const { body } = await c.json("POST", "/api/interviews", {});
-    const old = await app.service.record("demo-b", body.id);
-    old.lastActivity = Date.now() - 16 * 60_000;
-    await app.store.saveInterview(old);
+    const rec = await app.service.record("demo-b", body.id);
+    rec.lastActivity = Date.now() - 31 * 86_400_000;
+    await app.store.saveInterview(rec);
     await app.service.sweep();
     assert.equal((await c.req("GET", `/api/interviews/${body.id}`)).status, 404);
-    const bad = await c.json("PATCH", "/api/settings", { retentionMinutes: 99999 });
-    assert.equal(bad.status, 400);
+    // Se puede volver a desactivar.
+    r = await c.json("PATCH", "/api/settings", { historyRetentionDays: null });
+    assert.equal(r.status, 200);
   });
 
   it("envía cabeceras de seguridad y no guarda en caché respuestas de la API", async () => {

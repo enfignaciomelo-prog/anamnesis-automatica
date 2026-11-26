@@ -121,6 +121,11 @@ export class BetterAuthGate implements AuthGate {
     };
   }
 
+  async isActive(sessionId: string) {
+    const { rowCount } = await this.pool.query('SELECT 1 FROM "session" WHERE id = $1 AND "expiresAt" > now()', [sessionId]);
+    return (rowCount ?? 0) > 0;
+  }
+
   async revoke(session: AuthSession) {
     await this.pool.query('DELETE FROM "session" WHERE id = $1', [session.sessionId]);
   }

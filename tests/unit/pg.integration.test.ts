@@ -131,13 +131,14 @@ describe("PostgreSQL + Better Auth (integración real)", { skip }, () => {
       DEMO_MODE: "false",
       NODE_ENV: "test",
       DATABASE_URL: DB,
-      DATABASE_SSL: "disable",
+      DATABASE_SSL: "disable", // solo CI: PostgreSQL local de servicio, nunca en producción
       BETTER_AUTH_SECRET: randomBytes(32).toString("hex"),
       BETTER_AUTH_URL: BASE,
       EMAIL_TRANSPORT: "prueba",
       DEMO_SPEED: "100",
       STATIC_DIR: "public",
       OCR: "false",
+      SESSION_CHECK_MS: "300",
     });
     try {
       await start();
@@ -178,6 +179,26 @@ describe("PostgreSQL + Better Auth (integración real)", { skip }, () => {
     interviewId = await finish(a, templateId);
   });
 
+  it("sin política explícita, PostgreSQL no elimina anamnesis antiguas (finalizadas o borradores)", async () => {
+    const { body: draft } = await a.json<InterviewSnapshot>("POST", "/api/interviews", {});
+    for (const id of [interviewId, draft.id]) {
+      const r = await app.service.record((await a.json<SessionInfo>("GET", "/api/session")).body.professional.id, id);
+      r.lastActivity = Date.now() - 400 * 86_400_000;
+      assert.equal(await app.store.saveInterview(r), true);
+    }
+    await app.service.sweep();
+    assert.equal((await a.req("GET", `/api/interviews/${interviewId}`)).status, 200);
+    assert.equal((await a.req("GET", `/api/interviews/${draft.id}`)).status, 200);
+    // Con política explícita (30 días) sí se elimina lo vencido.
+    const set = await a.json("PATCH", "/api/settings", { historyRetentionDays: 30, confirmHistoryDeletion: true });
+    assert.equal(set.status, 200);
+    await app.service.sweep();
+    assert.equal((await a.req("GET", `/api/interviews/${draft.id}`)).status, 404);
+    // Se desactiva de nuevo para las pruebas siguientes; la finalizada se recrea.
+    await a.json("PATCH", "/api/settings", { historyRetentionDays: null });
+    interviewId = await finish(a, templateId);
+  });
+
   it("otro profesional no accede aunque cambie la URL o los identificadores", async () => {
     for (const [m, p] of [
       ["GET", `/api/interviews/${interviewId}`],
@@ -212,7 +233,22 @@ describe("PostgreSQL + Better Auth (integración real)", { skip }, () => {
     assert.equal(again.body.template.id, templateId);
   });
 
-  it("recuperación de contraseña: revoca sesiones y exige la nueva clave", async () => {
+  it("recuperación de contraseña: revoca sesiones, cierra sus canales abiertos y exige la nueva clave", async () => {
+    // Canal abierto de B antes del cambio de contraseña.
+    const { body: bi } = await b.json<InterviewSnapshot>("POST", "/api/interviews", {});
+    const ctrl = new AbortController();
+    const ev = await fetch(`${BASE}/api/interviews/${bi.id}/events`, { headers: { Cookie: b.cookie }, signal: ctrl.signal });
+    assert.equal(ev.status, 200);
+    const reader = ev.body!.getReader();
+    const closed = (async () => {
+      let t = "";
+      const d = new TextDecoder();
+      for (;;) {
+        const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }));
+        if (done) return t;
+        t += d.decode(value);
+      }
+    })();
     const anon = new Client();
     const rq = await anon.json("POST", "/api/auth/request-password-reset", { email: emailB, redirectTo: "/restablecer" });
     assert.equal(rq.status, 200, JSON.stringify(rq.body));
@@ -224,6 +260,11 @@ describe("PostgreSQL + Better Auth (integración real)", { skip }, () => {
     assert.ok(token);
     const rs = await anon.json("POST", "/api/auth/reset-password", { newPassword: "otra-clave-ficticia-2", token });
     assert.equal(rs.status, 200, JSON.stringify(rs.body));
+    // El servidor cierra el canal de la sesión revocada sin otra petición de B.
+    const text = await Promise.race([closed, new Promise<null>((r) => setTimeout(() => r(null), 4000))]);
+    if (text === null) ctrl.abort();
+    assert.ok(text !== null, "el canal de la sesión revocada debe cerrarse");
+    assert.match(text!, /"reason":"revocada"/);
     assert.equal((await b.json("GET", "/api/session")).status, 401, "la sesión anterior queda revocada");
     const old = await new Client().json("POST", "/api/auth/sign-in/email", { email: emailB, password: "clave-ficticia-segura-1" });
     assert.notEqual(old.status, 200);

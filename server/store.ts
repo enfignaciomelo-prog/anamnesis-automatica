@@ -22,7 +22,8 @@ import type { ProfessionalFieldState } from "./extraction/merge";
 export interface Professional {
   id: string;
   name: string;
-  retentionMinutes: number;
+  /** Días sin actividad tras los que se elimina del servidor. null = nunca (predeterminado). */
+  historyRetentionDays: number | null;
   idleMinutes: number;
 }
 
@@ -116,7 +117,10 @@ export interface Store {
   touchActivity(sessionId: string, at: number): Promise<void>;
   deleteActivity(sessionId: string): Promise<void>;
 
-  /** Elimina lo vencido por retención; devuelve los ids de entrevistas eliminadas. */
+  /**
+   * Limpieza periódica del servidor. Solo elimina anamnesis de profesionales que
+   * configuraron explícitamente la eliminación del historial; devuelve los ids eliminados.
+   */
   sweep(now: number): Promise<string[]>;
   close(): Promise<void>;
 }
@@ -261,9 +265,9 @@ export class MemoryStore implements Store {
   async sweep(now: number) {
     const removed: string[] = [];
     for (const r of [...this.interviews.values()]) {
-      const p = this.professionals.get(r.ownerId);
-      const ttl = (p?.retentionMinutes ?? 60) * 60_000;
-      if (r.lastActivity + ttl < now && r.status !== "escuchando") {
+      const days = this.professionals.get(r.ownerId)?.historyRetentionDays ?? null;
+      if (days === null) continue; // sin política explícita: nunca se elimina
+      if (r.lastActivity + days * 86_400_000 < now && r.status !== "escuchando") {
         this.interviews.delete(r.id);
         removed.push(r.id);
       }

@@ -79,12 +79,101 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
       await store.upsertProfessional({
         id,
         name,
-        retentionMinutes: config.retentionDefaultMinutes,
+        historyRetentionDays: null, // sin eliminación automática salvo configuración explícita
         idleMinutes: config.idleDefaultMinutes,
       });
   };
   const gate = deps.gate ?? new DemoAuth(ensureProfessional, now);
   const service = new InterviewService(store, config);
+
+  // ---- Canales en vivo ligados a su sesión ----
+  // El servidor los cierra por sí mismo al llegar el corte, al revocarse la
+  // sesión por otra vía o por inactividad, sin esperar otra petición.
+  interface SessionStreams {
+    session: AuthSession;
+    cutoffAt: number;
+    streams: Set<{ res: ServerResponse; interviewId: string }>;
+    timer: NodeJS.Timeout;
+  }
+  const liveSessions = new Map<string, SessionStreams>();
+
+  function closeSessionStreams(sessionId: string, reason: string) {
+    const entry = liveSessions.get(sessionId);
+    if (!entry) return [] as string[];
+    clearTimeout(entry.timer);
+    liveSessions.delete(sessionId);
+    const ids: string[] = [];
+    for (const { res, interviewId } of entry.streams) {
+      ids.push(interviewId);
+      if (!res.writableEnded) {
+        res.write(`event: session_ended\ndata: ${JSON.stringify({ reason })}\n\n`);
+        res.end();
+      }
+    }
+    logEvent("streams_closed", { reason, count: ids.length });
+    return ids;
+  }
+
+  /** Termina una sesión desde el servidor: revoca, pausa lo que escuchaba y cierra sus canales. */
+  async function expireSession(s: AuthSession, reason: string) {
+    const ids = closeSessionStreams(s.sessionId, reason);
+    await gate.revoke(s).catch((e) => logError("revoke", e));
+    await store.deleteActivity(s.sessionId).catch(() => undefined);
+    // Se detiene lo que escuchaba esta sesión y cualquier escucha sin pantalla conectada.
+    await service.pauseOrphaned(s.user.id, reason, ids);
+  }
+
+  function registerStream(a: { session: AuthSession; cutoffAt: number }, interviewId: string, res: ServerResponse) {
+    let entry = liveSessions.get(a.session.sessionId);
+    if (!entry) {
+      const delay = Math.max(0, Math.min(a.cutoffAt - now(), 2 ** 31 - 1));
+      entry = {
+        session: a.session,
+        cutoffAt: a.cutoffAt,
+        streams: new Set(),
+        timer: setTimeout(() => void expireSession(a.session, "corte_diario"), delay),
+      };
+      liveSessions.set(a.session.sessionId, entry);
+    }
+    const item = { res, interviewId };
+    entry.streams.add(item);
+    res.on("close", () => {
+      const e = liveSessions.get(a.session.sessionId);
+      if (!e) return;
+      e.streams.delete(item);
+      if (e.streams.size === 0) {
+        clearTimeout(e.timer);
+        liveSessions.delete(a.session.sessionId);
+      }
+    });
+  }
+
+  /** Revisión periódica de sesiones con canales abiertos. */
+  async function checkLiveSessions() {
+    const t = now();
+    for (const entry of [...liveSessions.values()]) {
+      const s = entry.session;
+      try {
+        if (t >= entry.cutoffAt) {
+          await expireSession(s, "corte_diario");
+          continue;
+        }
+        if (!(await gate.isActive(s.sessionId))) {
+          // Revocada por otra vía (cierre en otro lugar, cambio de contraseña…).
+          const ids = closeSessionStreams(s.sessionId, "revocada");
+          await service.pauseOrphaned(s.user.id, "revocada", ids);
+          continue;
+        }
+        if (!service.isListening(s.user.id)) {
+          const p = await store.getProfessional(s.user.id);
+          const last = (await store.getActivity(s.sessionId)) ?? s.createdAt;
+          if (p && t - last > p.idleMinutes * 60_000) await expireSession(s, "inactividad");
+        }
+      } catch (e) {
+        logError("check_sessions", e);
+      }
+    }
+  }
   const templates = new TemplateService(store);
   const staticRoot = resolve(config.staticDir);
 
@@ -93,10 +182,8 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
     Boolean((req.socket as { encrypted?: boolean }).encrypted);
 
   async function endSession(ctx: Ctx, s: AuthSession, reason: string) {
-    await gate.revoke(s).catch((e) => logError("revoke", e));
-    await store.deleteActivity(s.sessionId).catch(() => undefined);
-    await service.pauseAll(s.user.id, reason);
-    service.closeOwnerStreams(s.user.id);
+    // Solo esta sesión: otros dispositivos del mismo profesional siguen abiertos.
+    await expireSession(s, reason);
     ctx.res.setHeader("Set-Cookie", gate.clearCookies(ctx.https));
     // El navegador borra cachés y almacenamiento del sitio cuando lo soporta.
     ctx.res.setHeader("Clear-Site-Data", '"cache", "storage"');
@@ -136,8 +223,8 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
       professional: { id: a.professional.id, name: a.session.user.name, email: a.session.user.email },
       demo: config.demo,
       authMode: gate.mode,
-      retentionMinutes: a.professional.retentionMinutes,
-      retentionOptions: config.retentionOptions,
+      historyRetentionDays: a.professional.historyRetentionDays,
+      historyRetentionOptions: config.historyRetentionOptions,
       idleMinutes: a.professional.idleMinutes,
       idleOptions: config.idleOptions,
       cutoffAt: new Date(a.cutoffAt).toISOString(),
@@ -220,10 +307,17 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
       const a = await requireAuth(ctx);
       const body = await readJson(req);
       const p = { ...a.professional };
-      if (body.retentionMinutes !== undefined) {
-        const v = Number(body.retentionMinutes);
-        if (!config.retentionOptions.includes(v)) throw new HttpError(400, "retencion_invalida", "Plazo de retención no válido.");
-        p.retentionMinutes = v;
+      if (body.historyRetentionDays !== undefined) {
+        // Activar la eliminación del historial requiere una confirmación explícita.
+        if (body.historyRetentionDays === null) p.historyRetentionDays = null;
+        else {
+          const v = Number(body.historyRetentionDays);
+          if (!config.historyRetentionOptions.includes(v))
+            throw new HttpError(400, "retencion_invalida", "Plazo de eliminación no válido.");
+          if (body.confirmHistoryDeletion !== true)
+            throw new HttpError(400, "confirmacion_requerida", "Confirma explícitamente la eliminación automática del historial.");
+          p.historyRetentionDays = v;
+        }
       }
       if (body.idleMinutes !== undefined) {
         const v = Number(body.idleMinutes);
@@ -277,7 +371,8 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
     }
 
     if (parts[1] === "interviews") {
-      const { professional: p } = await requireAuth(ctx);
+      const authed = await requireAuth(ctx);
+      const p = authed.professional;
       const id = parts[2];
       if (!id) {
         ctx.route = "/api/interviews";
@@ -298,6 +393,7 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
         }
         if (sub === "events" && m === "GET") {
           await service.read(p.id, id); // verifica el dueño antes de abrir el canal
+          registerStream(authed, id, res);
           res.writeHead(200, {
             "Content-Type": "text/event-stream; charset=utf-8",
             "Cache-Control": "no-store",
@@ -444,6 +540,8 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
   });
 
   const sweepTimer = setInterval(() => service.sweep().catch((e) => logError("sweep", e)), 60_000);
+  const sessionTimer = setInterval(() => void checkLiveSessions(), config.sessionCheckMs);
+  sessionTimer.unref();
   const beatTimer = setInterval(() => service.heartbeat(), 15_000);
   sweepTimer.unref();
   beatTimer.unref();
@@ -457,6 +555,8 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
     close: async () => {
       clearInterval(sweepTimer);
       clearInterval(beatTimer);
+      clearInterval(sessionTimer);
+      for (const id of [...liveSessions.keys()]) closeSessionStreams(id, "apagado");
       await service.shutdown();
       server.closeAllConnections?.();
       await new Promise<void>((done) => server.close(() => done()));

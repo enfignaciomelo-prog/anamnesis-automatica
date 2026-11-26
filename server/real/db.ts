@@ -6,24 +6,14 @@ import { readFile, readdir } from "node:fs/promises";
 import pg from "pg";
 import type { Config } from "../config";
 import { logError, logEvent } from "../log";
+import { pgTlsOptions } from "./ssl";
 
 export const SCHEMA = "anamnesis";
 const LOCK_ID = 727_274;
 
 export function createPool(db: NonNullable<Config["database"]>): pg.Pool {
-  const url = new URL(db.url);
-  // La configuración SSL se controla aquí, no con parámetros de la URL.
-  url.searchParams.delete("sslmode");
-  const ssl =
-    db.ssl === "disable"
-      ? false
-      : db.caCert
-        ? { ca: db.caCert, rejectUnauthorized: true }
-        : // Sin el certificado del proveedor, el canal va cifrado pero sin verificar
-          // al servidor. Configura DATABASE_CA_CERT para verificarlo.
-          { rejectUnauthorized: false };
-  if (db.ssl === "require" && !db.caCert) logEvent("db_ssl_unverified");
-  const pool = new pg.Pool({ connectionString: url.toString(), ssl, max: 10, idleTimeoutMillis: 30_000 });
+  const { connectionString, ssl } = pgTlsOptions(db);
+  const pool = new pg.Pool({ connectionString, ssl, max: 10, idleTimeoutMillis: 30_000 });
   pool.on("connect", (client) => {
     client.query(`SET search_path TO ${SCHEMA}`).catch((e) => logError("db_search_path", e));
   });

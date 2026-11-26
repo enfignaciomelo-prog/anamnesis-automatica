@@ -18,7 +18,9 @@ let base: string;
 
 before(async () => {
   setLogSink(() => undefined);
-  app = createApp(loadConfig({ DEMO_SPEED: "100", STATIC_DIR: "public" }), { now: () => Date.now() + offset });
+  app = createApp(loadConfig({ DEMO_SPEED: "100", STATIC_DIR: "public", SESSION_CHECK_MS: "200" }), {
+    now: () => Date.now() + offset,
+  });
   await new Promise<void>((r) => app.server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
 });
@@ -169,5 +171,81 @@ describe("Mis anamnesis: filtros y autoguardado", () => {
     // Otro profesional no puede escribir borradores ajenos.
     const other = await login("demo-a");
     assert.equal((await other.json("POST", `/api/interviews/${body.id}/fields/motivo/draft`, { value: "x" })).status, 404);
+  });
+});
+
+/** Abre un canal de eventos y espera su cierre, sin hacer ninguna otra petición. */
+async function openStream(c: Client, interviewId: string) {
+  const ctrl = new AbortController();
+  const res = await fetch(`${base}/api/interviews/${interviewId}/events`, { headers: { Cookie: c.cookie }, signal: ctrl.signal });
+  assert.equal(res.status, 200);
+  const reader = res.body!.getReader();
+  let text = "";
+  const ended = (async () => {
+    const dec = new TextDecoder();
+    for (;;) {
+      const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }));
+      if (done) return text;
+      text += dec.decode(value);
+    }
+  })();
+  const waitEnd = (ms: number) =>
+    Promise.race([ended, new Promise<null>((r) => setTimeout(() => r(null), ms))]).then((v) => {
+      if (v === null) ctrl.abort();
+      return v;
+    });
+  return { waitEnd };
+}
+
+describe("canales en vivo ligados a su sesión", () => {
+  it("el servidor cierra el canal en el corte, sin peticiones posteriores ni temporizador del navegador", async () => {
+    const c = await login("demo-a");
+    const { body } = await c.json<InterviewSnapshot>("POST", "/api/interviews", {});
+    const s = await c.json<SessionInfo>("GET", "/api/session");
+    offset = Date.parse(s.body.cutoffAt) - Date.now() - 1500; // 1,5 s antes del corte
+    // La sesión estuvo activa hasta ese instante (no se prueba aquí la inactividad).
+    await app.store.touchActivity(c.cookie.split("=")[1], Date.now() + offset);
+    const stream = await openStream(c, body.id);
+    const text = await stream.waitEnd(5000);
+    assert.ok(text !== null, "el canal debe cerrarse solo al llegar el corte");
+    assert.match(text!, /event: session_ended\ndata: \{"reason":"corte_diario"\}/);
+    offset = 0;
+    assert.equal((await c.json("GET", "/api/session")).body.error, "sin_sesion", "la sesión quedó revocada");
+  });
+
+  it("si la sesión se revoca por otra vía, el servidor cierra su canal", async () => {
+    const c = await login("demo-a");
+    const { body } = await c.json<InterviewSnapshot>("POST", "/api/interviews", {});
+    const stream = await openStream(c, body.id);
+    const sid = c.cookie.split("=")[1];
+    // Revocación directa (como un cambio de contraseña en otro dispositivo), sin tocar el canal.
+    await app.gate.revoke({ sessionId: sid, user: { id: "demo-a", name: "x" }, createdAt: Date.now() });
+    const text = await stream.waitEnd(3000);
+    assert.ok(text !== null, "el canal debe cerrarse tras la revocación");
+    assert.match(text!, /"reason":"revocada"/);
+  });
+
+  it("el servidor cierra el canal por inactividad", async () => {
+    const c = await login("demo-b");
+    await c.json("PATCH", "/api/settings", { idleMinutes: 5 });
+    const { body } = await c.json<InterviewSnapshot>("POST", "/api/interviews", {});
+    const stream = await openStream(c, body.id);
+    offset = 6 * 60_000;
+    const text = await stream.waitEnd(3000);
+    offset = 0;
+    assert.ok(text !== null);
+    assert.match(text!, /"reason":"inactividad"/);
+  });
+
+  it("cerrar sesión en un dispositivo cierra solo los canales de esa sesión", async () => {
+    const phone = await login("demo-a");
+    const pc = await login("demo-a");
+    const { body } = await phone.json<InterviewSnapshot>("POST", "/api/interviews", {});
+    const s1 = await openStream(phone, body.id);
+    const s2 = await openStream(pc, body.id);
+    await phone.req("POST", "/api/logout", {});
+    assert.ok((await s1.waitEnd(2000)) !== null, "el canal del dispositivo que cerró sesión se cierra");
+    assert.equal(await s2.waitEnd(1000), null, "el otro dispositivo sigue conectado");
+    assert.equal((await pc.json("GET", "/api/session")).status, 200);
   });
 });

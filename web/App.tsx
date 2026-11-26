@@ -367,13 +367,6 @@ const STATE_LABEL: Record<string, string> = {
   finalizada: "Revisada",
 };
 
-function fmtDays(m: number) {
-  if (m < 60) return `${m} minutos`;
-  if (m < 24 * 60) return `${m / 60} ${m === 60 ? "hora" : "horas"}`;
-  const d = m / (24 * 60);
-  return `${d} ${d === 1 ? "día" : "días"}`;
-}
-
 function Home({
   session,
   onSession,
@@ -514,17 +507,35 @@ function Home({
             </option>
           ))}
         </select>
-        <label className="field-label" htmlFor="retencion">
-          Eliminar del servidor las anamnesis sin actividad después de
+        <h3 className="sub-head">Historial en el servidor</h3>
+        <p className="muted small">
+          Es independiente de la limpieza de este dispositivo. Por defecto tus anamnesis guardadas, incluidas las
+          finalizadas, no se eliminan automáticamente.
+        </p>
+        <label className="field-label" htmlFor="historial">
+          Eliminación automática del historial
         </label>
         <select
-          id="retencion"
-          value={session.retentionMinutes}
-          onChange={(e) => api.setSettings({ retentionMinutes: Number(e.target.value) }).then(onSession, () => undefined)}
+          id="historial"
+          value={session.historyRetentionDays === null ? "" : String(session.historyRetentionDays)}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (!v) {
+              api.setSettings({ historyRetentionDays: null }).then(onSession, () => undefined);
+              return;
+            }
+            const days = Number(v);
+            const ok = window.confirm(
+              `Se eliminarán del servidor, de forma permanente, las anamnesis (incluidas las finalizadas) sin actividad durante ${days} días. ¿Activar?`,
+            );
+            if (ok) api.setSettings({ historyRetentionDays: days, confirmHistoryDeletion: true }).then(onSession, () => undefined);
+            else e.target.value = "";
+          }}
         >
-          {session.retentionOptions.map((m) => (
-            <option key={m} value={m}>
-              {fmtDays(m)}
+          <option value="">Desactivada (no se elimina nada automáticamente)</option>
+          {session.historyRetentionOptions.map((d) => (
+            <option key={d} value={d}>
+              Eliminar tras {d} días sin actividad
             </option>
           ))}
         </select>
