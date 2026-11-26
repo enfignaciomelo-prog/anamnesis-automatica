@@ -1,6 +1,6 @@
 # Estado de Anamnesis Automática
 
-Última actualización: etapa 1 (demostración funcional), 26-11-2026.
+Última actualización: etapa 2 (plantillas propias), 26-11-2026.
 
 **Leyenda:** ✅ Real (funciona de verdad) · 🧪 Simulado (funciona con datos o
 lógica de demostración) · ⏳ Pendiente (no existe aún)
@@ -17,7 +17,7 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Texto provisional separado del definitivo | ✅ | Eventos `interim` y segmentos definitivos distintos en la interfaz. |
 | Asignación de hablantes por el profesional | ✅ | La app no asume quién es el paciente; sin asignar, todo queda en revisión. |
 | Propuestas con fragmento de respaldo | 🧪 | Extractor de reglas (no IA). Respaldo literal real; tocarlo lleva al segmento. |
-| Clasificación actual / histórico / negado / familiar | 🧪 | Reglas sobre el texto. Claude: etapa 4. |
+| Clasificación actual / histórico / negado / familiar | 🧪 | Reglas sobre el texto. Claude: etapa 4. Funciona también en plantillas propias a través del tipo de dato de cada campo. |
 | No convertir lo no mencionado en negación | ✅ | Solo negaciones explícitas; probado. |
 | Contradicciones y autocorrecciones | 🧪 | Reglas (dosis, frecuencia, afirmación/negación, «perdón, mejor dicho»). |
 | Revisión obligatoria de medicamentos, dosis y alergias | ✅ | Siempre «Requiere revisión». |
@@ -25,21 +25,28 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | No sobrescribir cambios del profesional | ✅ | Información nueva se muestra aparte y vuelve el campo a revisión. |
 | Revisión antes de finalizar | ✅ | Exige detener, resolver lo pendiente y declarar la revisión. |
 | Exportar texto, Word, PDF | ✅ | Solo después de finalizar; respaldo opcional. |
-| Exportar Excel | ⏳ | Etapa 2 (plantillas mapeadas a hoja y celda). |
+| Exportar Excel | ✅ | Para plantillas importadas desde Excel (etapa 2). |
 | Pausa al pasar a segundo plano (llamada, bloqueo) | ✅ | Se pausa y se explica; no hay escucha en segundo plano. |
 | Pausa por pérdida de conexión | ✅ | El servidor pausa si la interfaz se desconecta (8 s). Reconexión automática. |
 
-## Plantillas
+## Plantillas (etapa 2)
 
-| Función | Estado |
-|---|---|
-| Plantilla genérica predeterminada | ✅ |
-| Crear y editar secciones y campos | ⏳ Etapa 2 |
-| Versionado de plantillas | ⏳ Etapa 2 (hoy la genérica es v1 y se copia en cada entrevista) |
-| Importar DOCX y XLSX con vista previa y confirmación | ⏳ Etapa 2 |
-| Mapeo de hoja y celda en Excel; marcadores en Word | ⏳ Etapa 2 |
-| Importar PDF con texto | ⏳ Etapa 2 |
-| OCR para escaneos con revisión manual | ⏳ Etapa 2 |
+| Función | Estado | Detalle |
+|---|---|---|
+| Plantilla genérica predeterminada | ✅ | Solo lectura; se puede duplicar. |
+| Crear y editar secciones y campos | ✅ | Nombre, tipo de dato, revisión obligatoria, orden, agregar y quitar. |
+| Tipo de dato por campo | ✅ | Indica qué reconoce el extractor. Medicamentos y alergias siempre con revisión obligatoria. |
+| Versionado | ✅ | Cada guardado crea una versión; se pueden ver las anteriores; las entrevistas conservan la suya; se rechaza guardar sobre una versión desactualizada. |
+| Importar DOCX con vista previa y confirmación | ✅ | Marcadores de Word, líneas «Etiqueta:» o con «____», secciones por títulos. |
+| Importar XLSX con hoja y celda | ✅ | Etiquetas y nombres definidos; hoja y celda editables; celdas con fórmula no se pueden mapear. |
+| Importar PDF con texto | ✅ | Solo propone campos; la exportación usa el formato estándar. |
+| PDF escaneado: OCR y revisión manual | ✅ / ⚠️ | OCR en español con tesseract si el servidor lo tiene (incluido en el `Dockerfile`); los campos quedan marcados «Leído por OCR: revisar». Sin OCR (p. ej., Render con runtime Node), se piden los campos a mano. |
+| Exportar en el formato de la plantilla (Word) | ✅ | Llena una copia en marcadores o al final de la línea de la etiqueta. Marca «DATOS FICTICIOS» en modo demo. |
+| Exportar Excel de plantillas mapeadas | ✅ | Escribe solo en las celdas confirmadas, como texto; no toca fórmulas. |
+| Conservación exacta del diseño | ❌ No se promete | Se avisa al importar y al exportar. |
+| Seguridad de archivos | ✅ | Máx. 5 MB; rechaza macros (.docm, .xlsm o `vbaProject.bin` aunque se renombre), formatos antiguos y extensiones que no coinciden; límites de descompresión; nunca se ejecutan macros, fórmulas ni scripts; el texto de los archivos se trata solo como datos. |
+| Separación entre profesionales | ✅ | Plantillas y archivos originales accesibles solo por su dueño (probado). |
+| Persistencia de plantillas | 🧪 | En memoria, como el resto de la demo (PostgreSQL: etapa 5). |
 
 ## Cuentas, seguridad y privacidad
 
@@ -55,7 +62,7 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Service worker sin caché clínica | ✅ | Ignora `/api/` (probado). |
 | Cabeceras de seguridad, cookie HttpOnly/SameSite, verificación de origen | ✅ | |
 | Explicación de datos por proveedor | ✅ | Pantalla «Qué datos se usan y dónde». |
-| No ejecutar macros ni instrucciones de archivos | ⏳ | Aplica a la importación (etapa 2). |
+| No ejecutar macros ni instrucciones de archivos | ✅ | Ver «Seguridad de archivos». |
 | Claves solo en servidor | ✅ | Se leen de variables de entorno; hoy no se usan. |
 
 ## Plataforma
@@ -70,9 +77,12 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Despliegue HTTPS de demostración | ⏳ | `render.yaml` y `Dockerfile` preparados, sin probar. |
 | Prueba en Safari/WebKit real | ⏳ | WebKit no está instalado aquí; pendiente en tu iPhone tras el despliegue. |
 
-## Pruebas (etapa 1)
+## Pruebas
 
-- `npm test`: 22 pruebas unitarias y de integración (extractor, API, autorización,
-  exportación, retención, registros, service worker).
-- `npm run test:e2e`: flujo completo con Playwright en tamaño iPhone y computador.
+- `npm test`: 36 pruebas unitarias y de integración (extractor, API, autorización,
+  exportación, retención, registros, service worker, importación, versionado,
+  exportación en formato original, macros, OCR).
+- `npm run test:e2e`: flujo de demostración y flujo de plantillas con Playwright en
+  tamaño iPhone y computador.
+- Archivos de prueba ficticios en `tests/fixtures` (`npm run fixtures` los regenera).
 - La CI de GitHub ejecuta tipos, pruebas, compilación con Vite y E2E en cada push y PR.

@@ -1,4 +1,31 @@
-import type { InterviewSnapshot, InterviewSummary, SessionInfo, SpeakerRole } from "../shared/types";
+import type {
+  ImportAnalysis,
+  InterviewSnapshot,
+  InterviewSummary,
+  SessionInfo,
+  SpeakerRole,
+  TemplateDetail,
+  TemplateSummary,
+} from "../shared/types";
+
+export interface TemplateBody {
+  name: string;
+  sections: {
+    id?: string;
+    title: string;
+    fields: {
+      id?: string;
+      label: string;
+      hint?: string;
+      concept?: string | null;
+      critical?: boolean;
+      manualOnly?: boolean;
+      target?: unknown;
+    }[];
+  }[];
+  note?: string;
+  baseVersion?: number;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -34,7 +61,32 @@ export const api = {
   logout: () => call<{ ok: true }>("POST", "/api/logout", {}),
   setRetention: (retentionMinutes: number) => call<SessionInfo>("PATCH", "/api/settings", { retentionMinutes }),
   list: () => call<InterviewSummary[]>("GET", "/api/interviews"),
-  create: () => call<InterviewSnapshot>("POST", "/api/interviews", {}),
+  create: (templateId?: string) => call<InterviewSnapshot>("POST", "/api/interviews", { templateId }),
+  templates: () => call<TemplateSummary[]>("GET", "/api/templates"),
+  template: (id: string, version?: number) =>
+    call<TemplateDetail>("GET", `/api/templates/${id}${version ? `?version=${version}` : ""}`),
+  createTemplate: (body: TemplateBody) => call<TemplateDetail>("POST", "/api/templates", body),
+  duplicateTemplate: (fromId: string) => call<TemplateDetail>("POST", "/api/templates", { fromId }),
+  saveTemplate: (id: string, body: TemplateBody) => call<TemplateDetail>("PUT", `/api/templates/${id}`, body),
+  deleteTemplate: (id: string) => call<{ ok: true }>("DELETE", `/api/templates/${id}`),
+  confirmImport: (importId: string, body: TemplateBody) =>
+    call<TemplateDetail>("POST", `/api/templates/import/${importId}/confirm`, body),
+  importFile: async (file: File): Promise<ImportAnalysis> => {
+    let res: Response;
+    try {
+      res = await fetch("/api/templates/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) },
+        body: file,
+        credentials: "same-origin",
+      });
+    } catch {
+      throw new ApiError(0, "red", "Sin conexión con el servidor. Revisa tu conexión e intenta de nuevo.");
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, data.error ?? "error", data.message ?? "No se pudo importar el archivo.");
+    return data as ImportAnalysis;
+  },
   remove: (id: string) => call<{ ok: true }>("DELETE", `/api/interviews/${id}`),
   consent: (id: string, givenBy: "paciente" | "representante") =>
     call<InterviewSnapshot>("POST", `/api/interviews/${id}/consent`, { givenBy }),

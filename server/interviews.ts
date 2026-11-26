@@ -9,6 +9,7 @@ import type {
   InterviewSnapshot,
   InterviewSummary,
   SpeakerRole,
+  Template,
 } from "../shared/types";
 import { GENERIC_TEMPLATE, allFields } from "../shared/template-generic";
 import type { Config } from "./config";
@@ -50,7 +51,7 @@ export class InterviewService {
       throw new HttpError(409, "finalizada", "La entrevista ya fue finalizada y no se puede modificar.");
   }
 
-  create(ownerId: string): InterviewRecord {
+  create(ownerId: string, template: Template = GENERIC_TEMPLATE): InterviewRecord {
     const n = this.store.listInterviews(ownerId).length + 1;
     const when = new Intl.DateTimeFormat("es-CL", {
       timeZone: "America/Santiago",
@@ -60,7 +61,7 @@ export class InterviewService {
       minute: "2-digit",
     }).format(new Date());
     const title = `${this.config.demo ? "Entrevista demo" : "Entrevista"} ${n} · ${when}`;
-    const r = this.store.createInterview(ownerId, GENERIC_TEMPLATE, title);
+    const r = this.store.createInterview(ownerId, template, title);
     logEvent("interview_created");
     return r;
   }

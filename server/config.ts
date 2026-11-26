@@ -11,6 +11,8 @@ export interface Config {
   staticDir: string;
   /** Pausa automática si se pierde la conexión con la interfaz mientras se escucha. */
   disconnectPauseMs: number;
+  /** OCR de PDF escaneados (requiere tesseract y pdftoppm en el servidor). */
+  ocr: boolean;
   providers: { anthropic: boolean; deepgram: boolean; database: boolean };
 }
 
@@ -36,6 +38,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: env.TRUST_PROXY === "true",
     staticDir: env.STATIC_DIR ?? "dist",
     disconnectPauseMs: Number(env.DISCONNECT_PAUSE_MS ?? 8000),
+    ocr: env.OCR !== "false",
     providers,
   };
 }

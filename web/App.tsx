@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
-import type { InterviewSummary, SessionInfo } from "../shared/types";
+import type { ImportAnalysis, InterviewSummary, SessionInfo, TemplateSummary } from "../shared/types";
 import { api, ApiError } from "./api";
 import { InterviewScreen } from "./Interview";
 import { PrivacyScreen } from "./Privacy";
+import { TemplateEditorScreen, TemplatesScreen } from "./Templates";
 
-type View = { name: "home" } | { name: "interview"; id: string } | { name: "privacy" };
+type View =
+  | { name: "home" }
+  | { name: "interview"; id: string }
+  | { name: "privacy" }
+  | { name: "templates" }
+  | { name: "template"; id: string }
+  | { name: "import"; analysis: ImportAnalysis };
 
 export function App() {
   const [session, setSession] = useState<SessionInfo | null | undefined>(undefined);
@@ -20,12 +27,31 @@ export function App() {
     return <Welcome onLogin={setSession} onPrivacy={() => setView({ name: "privacy" })} />;
   if (view.name === "interview")
     return <InterviewScreen id={view.id} session={session} onExit={() => setView({ name: "home" })} />;
+  if (view.name === "templates")
+    return (
+      <TemplatesScreen
+        onBack={() => setView({ name: "home" })}
+        onOpen={(id) => setView({ name: "template", id })}
+        onImported={(analysis) => setView({ name: "import", analysis })}
+      />
+    );
+  if (view.name === "template" || view.name === "import")
+    return (
+      <TemplateEditorScreen
+        key={view.name === "template" ? view.id : view.analysis.importId}
+        id={view.name === "template" ? view.id : undefined}
+        analysis={view.name === "import" ? view.analysis : undefined}
+        onBack={() => setView({ name: "templates" })}
+        onSaved={(id) => setView({ name: "template", id })}
+      />
+    );
   return (
     <Home
       session={session}
       onSession={setSession}
       onOpen={(id) => setView({ name: "interview", id })}
       onPrivacy={() => setView({ name: "privacy" })}
+      onTemplates={() => setView({ name: "templates" })}
     />
   );
 }
@@ -80,13 +106,17 @@ function Home({
   onSession,
   onOpen,
   onPrivacy,
+  onTemplates,
 }: {
   session: SessionInfo;
   onSession: (s: SessionInfo | null) => void;
   onOpen: (id: string) => void;
   onPrivacy: () => void;
+  onTemplates: () => void;
 }) {
   const [list, setList] = useState<InterviewSummary[] | null>(null);
+  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  const [templateId, setTemplateId] = useState("generica");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -94,9 +124,10 @@ function Home({
       if (e.status === 401) onSession(null);
       else setError(e.message);
     });
+    api.templates().then(setTemplates, () => undefined);
   }, [onSession]);
 
-  const create = () => api.create().then((s) => onOpen(s.id), (e: ApiError) => setError(e.message));
+  const create = () => api.create(templateId).then((s) => onOpen(s.id), (e: ApiError) => setError(e.message));
 
   return (
     <main className="home">
@@ -110,8 +141,21 @@ function Home({
         </button>
       </header>
       {session.demo && <DemoNotice />}
+      <label className="field-label" htmlFor="plantilla">
+        Plantilla para la nueva entrevista
+      </label>
+      <select id="plantilla" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+        {(templates.length ? templates : [{ id: "generica", name: "Anamnesis general", version: 1 }]).map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name} (v{t.version})
+          </option>
+        ))}
+      </select>
       <button className="btn primary wide" onClick={create}>
         Nueva entrevista
+      </button>
+      <button className="btn wide-secondary" onClick={onTemplates}>
+        Plantillas
       </button>
       {error && <p className="error" role="alert">{error}</p>}
       <section aria-label="Tus entrevistas">

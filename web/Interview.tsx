@@ -626,6 +626,12 @@ function Review({
             <input type="checkbox" checked={evidence} onChange={(e) => setEvidence(e.target.checked)} />
             Incluir fragmentos de respaldo
           </label>
+          {(snap.template.source?.kind === "docx" || snap.template.source?.kind === "xlsx") && (
+            <p className="muted small">
+              El formato de tu plantilla llena una copia del archivo original en los marcadores, líneas o
+              celdas que confirmaste. Revisa el resultado: el diseño puede variar.
+            </p>
+          )}
           <div className="export-grid">
             <a className="btn" href={exp("txt")} download>
               Texto (.txt)
@@ -636,9 +642,16 @@ function Review({
             <a className="btn" href={exp("pdf")} download>
               PDF
             </a>
-            <span className="btn disabled" aria-disabled="true" title="Disponible con plantillas mapeadas (etapa 2)">
-              Excel (etapa 2)
-            </span>
+            {snap.template.source?.kind === "docx" && (
+              <a className="btn" href={`/api/interviews/${snap.id}/export?format=original`} download>
+                Word (formato de tu plantilla)
+              </a>
+            )}
+            {snap.template.source?.kind === "xlsx" && (
+              <a className="btn" href={`/api/interviews/${snap.id}/export?format=original`} download>
+                Excel (formato de tu plantilla)
+              </a>
+            )}
           </div>
         </>
       ) : (

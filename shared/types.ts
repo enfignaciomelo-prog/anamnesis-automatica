@@ -12,6 +12,26 @@ export interface TemplateField {
   manualOnly?: boolean;
   /** Texto usado cuando el paciente niega explícitamente, p. ej. "alergias a medicamentos". */
   negationLabel?: string;
+  /** Tipo de dato clínico que el extractor reconoce (ver shared/concepts.ts). */
+  concept?: string;
+  /** Dónde va el valor en el archivo original de la plantilla importada. */
+  target?: FieldTarget;
+}
+
+export type FieldTarget =
+  | { kind: "bookmark"; name: string }
+  | { kind: "paragraph"; index: number; text: string }
+  | { kind: "cell"; sheet: string; cell: string };
+
+export type SourceKind = "docx" | "xlsx" | "pdf";
+
+export interface TemplateSource {
+  kind: SourceKind;
+  fileName: string;
+  /** Identificador opaco del archivo original (solo accesible por su dueño). */
+  fileId: string;
+  /** Campos obtenidos por OCR: requieren revisión manual. */
+  ocr?: boolean;
 }
 
 export interface TemplateSection {
@@ -25,6 +45,46 @@ export interface Template {
   name: string;
   version: number;
   sections: TemplateSection[];
+  source?: TemplateSource;
+}
+
+export interface TemplateSummary {
+  id: string;
+  name: string;
+  version: number;
+  builtIn: boolean;
+  sourceKind: SourceKind | null;
+  updatedAt: string;
+  fieldCount: number;
+}
+
+export interface TemplateDetail extends Template {
+  builtIn: boolean;
+  versions: { version: number; createdAt: string; note: string }[];
+}
+
+/** Propuesta de un campo detectado en un archivo importado. */
+export interface ImportCandidate {
+  key: string;
+  label: string;
+  section: string;
+  concept: string | null;
+  target: FieldTarget | null;
+  include: boolean;
+  /** Motivo por el que no se puede mapear (p. ej., la celda tiene fórmula). */
+  problem?: string;
+  origin: "marcador" | "etiqueta" | "celda" | "nombre_definido" | "pdf" | "ocr";
+}
+
+export interface ImportAnalysis {
+  importId: string;
+  fileName: string;
+  kind: SourceKind;
+  suggestedName: string;
+  candidates: ImportCandidate[];
+  sheets: string[];
+  warnings: string[];
+  ocr: boolean;
 }
 
 export type SpeakerRole = "profesional" | "paciente" | "acompanante" | "sin_asignar";

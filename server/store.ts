@@ -4,7 +4,17 @@
  * La implementación PostgreSQL (etapa 5) debe cumplir la misma interfaz.
  */
 import { randomBytes, randomUUID } from "node:crypto";
-import type { Consent, InterviewStatus, Segment, SpeakerRole, Template } from "../shared/types";
+import type {
+  Consent,
+  ImportAnalysis,
+  InterviewStatus,
+  Segment,
+  SourceKind,
+  SpeakerRole,
+  Template,
+  TemplateSection,
+  TemplateSource,
+} from "../shared/types";
 import type { ProfessionalFieldState } from "./extraction/merge";
 
 export interface Professional {
@@ -35,7 +45,52 @@ export interface InterviewRecord {
   finalizedAt: number | null;
 }
 
+export interface TemplateVersionRecord {
+  version: number;
+  createdAt: number;
+  note: string;
+  sections: TemplateSection[];
+}
+
+export interface TemplateRecord {
+  id: string;
+  ownerId: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  source?: TemplateSource;
+  versions: TemplateVersionRecord[];
+}
+
+export interface FileRecord {
+  id: string;
+  ownerId: string;
+  kind: SourceKind;
+  fileName: string;
+  bytes: Buffer;
+}
+
+export interface PendingImport {
+  id: string;
+  ownerId: string;
+  expiresAt: number;
+  fileId: string;
+  analysis: ImportAnalysis;
+  /** Marcadores y párrafos válidos detectados, para validar lo confirmado. */
+  validTargets: Set<string>;
+}
+
 export interface Store {
+  saveTemplate(t: TemplateRecord): void;
+  getTemplate(ownerId: string, id: string): TemplateRecord | undefined;
+  listTemplates(ownerId: string): TemplateRecord[];
+  deleteTemplate(ownerId: string, id: string): boolean;
+  putFile(f: Omit<FileRecord, "id">): FileRecord;
+  getFile(ownerId: string, id: string): FileRecord | undefined;
+  deleteFile(ownerId: string, id: string): void;
+  putImport(p: Omit<PendingImport, "id" | "expiresAt">, ttlMs: number): PendingImport;
+  getImport(ownerId: string, id: string): PendingImport | undefined;
+  deleteImport(ownerId: string, id: string): void;
   getProfessional(id: string): Professional | undefined;
   upsertProfessional(p: Professional): void;
   createSession(professionalId: string, ttlMs: number): Session;
@@ -53,6 +108,49 @@ export class MemoryStore implements Store {
   private professionals = new Map<string, Professional>();
   private sessions = new Map<string, Session>();
   private interviews = new Map<string, InterviewRecord>();
+  private templates = new Map<string, TemplateRecord>();
+  private files = new Map<string, FileRecord>();
+  private imports = new Map<string, PendingImport>();
+
+  saveTemplate(t: TemplateRecord) {
+    this.templates.set(t.id, t);
+  }
+  getTemplate(ownerId: string, id: string) {
+    const t = this.templates.get(id);
+    return t && t.ownerId === ownerId ? t : undefined;
+  }
+  listTemplates(ownerId: string) {
+    return [...this.templates.values()].filter((t) => t.ownerId === ownerId).sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+  deleteTemplate(ownerId: string, id: string) {
+    if (!this.getTemplate(ownerId, id)) return false;
+    this.templates.delete(id);
+    return true;
+  }
+  putFile(f: Omit<FileRecord, "id">) {
+    const rec = { ...f, id: `file_${randomUUID()}` };
+    this.files.set(rec.id, rec);
+    return rec;
+  }
+  getFile(ownerId: string, id: string) {
+    const f = this.files.get(id);
+    return f && f.ownerId === ownerId ? f : undefined;
+  }
+  deleteFile(ownerId: string, id: string) {
+    if (this.getFile(ownerId, id)) this.files.delete(id);
+  }
+  putImport(p: Omit<PendingImport, "id" | "expiresAt">, ttlMs: number) {
+    const rec = { ...p, id: p.analysis.importId, expiresAt: Date.now() + ttlMs };
+    this.imports.set(rec.id, rec);
+    return rec;
+  }
+  getImport(ownerId: string, id: string) {
+    const r = this.imports.get(id);
+    return r && r.ownerId === ownerId && r.expiresAt > Date.now() ? r : undefined;
+  }
+  deleteImport(ownerId: string, id: string) {
+    if (this.getImport(ownerId, id)) this.imports.delete(id);
+  }
 
   getProfessional(id: string) {
     return this.professionals.get(id);
@@ -122,6 +220,13 @@ export class MemoryStore implements Store {
       }
     }
     for (const s of this.sessions.values()) if (s.expiresAt < now) this.sessions.delete(s.id);
+    for (const imp of this.imports.values()) {
+      if (imp.expiresAt < now) {
+        this.imports.delete(imp.id);
+        // El archivo de una importación no confirmada se descarta.
+        if (![...this.templates.values()].some((t) => t.source?.fileId === imp.fileId)) this.files.delete(imp.fileId);
+      }
+    }
     return removed;
   }
 }
