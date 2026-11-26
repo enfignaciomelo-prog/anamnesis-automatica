@@ -49,6 +49,9 @@ class Client {
         ...extra,
       },
       body: body === undefined ? undefined : isBuf ? new Uint8Array(body as Buffer) : JSON.stringify(body),
+    }).catch((e: Error & { cause?: unknown }) => {
+      process.stderr.write(`FETCH_FALLÓ ${method} ${path}: ${String(e.cause ?? e)}\n`);
+      throw e;
     });
     for (const c of res.headers.getSetCookie()) {
       const [kv] = c.split(";");
@@ -120,7 +123,10 @@ describe("PostgreSQL + Better Auth (integración real)", { skip }, () => {
   before(async () => {
     const { loadConfig } = await import("../../server/config");
     const { setLogSink } = await import("../../server/log");
-    setLogSink(() => undefined);
+    // Solo errores (sin datos clínicos) para diagnosticar en la CI.
+    setLogSink((l) => {
+      if (l.includes('"event":"error')) process.stderr.write(`SERVIDOR ${l}\n`);
+    });
     config = loadConfig({
       DEMO_MODE: "false",
       NODE_ENV: "test",
