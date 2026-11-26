@@ -65,8 +65,8 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | PWA instalable (manifiesto, íconos, service worker) | ✅ | Probar «Agregar a inicio» en Safari tras el despliegue. |
 | Diseño móvil primero y computador | ✅ | Probado en 390×844 y 1280×900 (Chromium). |
 | Backend sirve la interfaz compilada | ✅ | Un solo proceso Node. |
-| Compilación con Vite | ⚠️ | Configurada, pero **no ejecutada aquí** (sin acceso al registro npm). Se usó esbuild con el mismo resultado. La CI la ejecutará. |
-| Verificación de tipos de la interfaz | ⚠️ | Pendiente de la CI (faltan tipos de React en este entorno). El servidor sí pasa `tsc`. |
+| Compilación con Vite | ✅ | Verificada en la CI de GitHub. En el entorno de Claude Code sin registro npm se usa esbuild. |
+| Verificación de tipos (interfaz y servidor) | ✅ | `tsc` en la CI de GitHub. |
 | Despliegue HTTPS de demostración | ⏳ | `render.yaml` y `Dockerfile` preparados, sin probar. |
 | Prueba en Safari/WebKit real | ⏳ | WebKit no está instalado aquí; pendiente en tu iPhone tras el despliegue. |
 
@@ -75,3 +75,4 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 - `npm test`: 22 pruebas unitarias y de integración (extractor, API, autorización,
   exportación, retención, registros, service worker).
 - `npm run test:e2e`: flujo completo con Playwright en tamaño iPhone y computador.
+- La CI de GitHub ejecuta tipos, pruebas, compilación con Vite y E2E en cada push y PR.
