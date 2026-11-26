@@ -17,6 +17,7 @@ import type {
   Template,
 } from "../shared/types";
 import { GENERIC_TEMPLATE, allFields } from "../shared/template-generic";
+import type { AuthSession } from "./auth/types";
 import type { Config } from "./config";
 import { DEMO_SCRIPT } from "./demo/script";
 import { extractDemo } from "./extraction/demoExtractor";
@@ -39,6 +40,8 @@ export class InterviewService {
   /** Entrevistas activas en este proceso. */
   private live = new Map<string, InterviewRecord>();
   private writes = new Map<string, Promise<unknown>>();
+  /** Sesión que inició o reanudó la escucha de cada entrevista (dueña del micrófono). */
+  private listeners = new Map<string, AuthSession>();
 
   constructor(
     private store: Store,
@@ -158,8 +161,31 @@ export class InterviewService {
     return r;
   }
 
-  isListening(ownerId: string) {
-    return [...this.live.values()].some((r) => r.ownerId === ownerId && r.status === "escuchando");
+  /** ¿Esta sesión es la que escucha alguna entrevista? (exime solo a esa sesión de la inactividad) */
+  isListeningSession(sessionId: string) {
+    for (const [id, s] of this.listeners) {
+      if (s.sessionId === sessionId && this.live.get(id)?.status === "escuchando") return true;
+    }
+    return false;
+  }
+
+  /** Sesiones que tienen una escucha activa (para revisarlas aunque no tengan canal abierto). */
+  listeningSessions(): AuthSession[] {
+    const out = new Map<string, AuthSession>();
+    for (const [id, s] of this.listeners) if (this.live.get(id)?.status === "escuchando") out.set(s.sessionId, s);
+    return [...out.values()];
+  }
+
+  /** Pausa solo las escuchas iniciadas o reanudadas por esta sesión. */
+  async pauseForSession(sessionId: string, reason: string) {
+    for (const [id, s] of [...this.listeners]) {
+      if (s.sessionId !== sessionId) continue;
+      const r = this.live.get(id);
+      if (!r || r.status !== "escuchando") continue;
+      this.applyCommand(r, "pausar", reason);
+      await this.commit(r).catch((e) => logError("pause_session", e));
+      this.releaseIfIdle(id);
+    }
   }
 
   async consent(ownerId: string, id: string, givenBy: Consent["givenBy"]) {
@@ -173,11 +199,13 @@ export class InterviewService {
     return this.snapshot(r);
   }
 
-  async command(ownerId: string, id: string, cmd: Command, reason: string | null = null) {
+  async command(ownerId: string, id: string, cmd: Command, reason: string | null = null, session?: AuthSession) {
     const r = await this.get(ownerId, id);
     this.requireEditable(r);
     this.retain(r);
     this.applyCommand(r, cmd, reason);
+    // La escucha queda ligada a la sesión que la inició o reanudó.
+    if ((cmd === "iniciar" || cmd === "reanudar") && session && r.status === "escuchando") this.listeners.set(r.id, session);
     await this.commit(r);
     this.releaseIfIdle(r.id);
     return this.snapshot(r);
@@ -212,6 +240,7 @@ export class InterviewService {
               r.status = "detenida";
               r.pauseReason = null;
               this.sources.delete(r.id);
+              this.listeners.delete(r.id);
               this.persist(r).catch((e) => logError("segment_save", e));
               this.broadcast(r);
               this.releaseIfIdle(r.id);
@@ -224,6 +253,7 @@ export class InterviewService {
       r.status = "escuchando";
       src.start();
     } else if (cmd === "pausar") {
+      this.listeners.delete(r.id);
       this.sources.get(r.id)?.pause();
       r.status = "pausada";
       r.pauseReason = reason;
@@ -236,6 +266,7 @@ export class InterviewService {
         r.status = "detenida";
       }
     } else {
+      this.listeners.delete(r.id);
       r.status = "detenida";
       r.pauseReason = null;
       const src = this.sources.get(r.id);
@@ -346,6 +377,7 @@ export class InterviewService {
 
   async delete(ownerId: string, id: string) {
     const r = await this.get(ownerId, id);
+    this.listeners.delete(r.id);
     this.sources.get(r.id)?.stop();
     this.sources.delete(r.id);
     this.live.delete(r.id);
@@ -404,23 +436,7 @@ export class InterviewService {
     this.disconnectTimers.set(id, t);
   }
 
-  /** Pausa las escuchas del profesional que quedaron sin ninguna pantalla conectada. */
-  async pauseOrphaned(ownerId: string, reason: string, also: Iterable<string> = []) {
-    const extra = new Set(also);
-    for (const r of [...this.live.values()]) {
-      if (r.ownerId !== ownerId || r.status !== "escuchando") continue;
-      const watchers = [...(this.subscribers.get(r.id) ?? [])].filter((res) => !res.writableEnded).length;
-      if (watchers === 0 || extra.has(r.id)) await this.pauseFor(ownerId, r.id, reason);
-    }
-  }
 
-  /** Pausa una entrevista que escuchaba para una sesión que terminó. */
-  async pauseFor(ownerId: string, id: string, reason: string) {
-    const r = this.live.get(id);
-    if (!r || r.ownerId !== ownerId || r.status !== "escuchando") return;
-    this.applyCommand(r, "pausar", reason);
-    await this.commit(r).catch((e) => logError("pause_session", e));
-  }
 
   private broadcast(r: InterviewRecord) {
     const set = this.subscribers.get(r.id);

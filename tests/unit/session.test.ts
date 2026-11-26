@@ -104,19 +104,7 @@ describe("bloqueo por inactividad", () => {
     assert.equal(bad.status, 400);
   });
 
-  it("mientras escucha una entrevista no se bloquea", async () => {
-    const c = await login("demo-b");
-    await c.json("PATCH", "/api/settings", { idleMinutes: 5 });
-    const { body } = await c.json<InterviewSnapshot>("POST", "/api/interviews", {});
-    await c.json("POST", `/api/interviews/${body.id}/consent`, { givenBy: "paciente" });
-    await c.json("POST", `/api/interviews/${body.id}/command`, { command: "iniciar" });
-    await c.json("POST", `/api/interviews/${body.id}/command`, { command: "pausar" });
-    await c.json("POST", `/api/interviews/${body.id}/command`, { command: "reanudar" });
-    offset = 10 * 60_000;
-    const r = await c.json<InterviewSnapshot>("GET", `/api/interviews/${body.id}`);
-    assert.equal(r.status, 200, String(r.body.error));
-    await c.json("POST", `/api/interviews/${body.id}/command`, { command: "detener" });
-  });
+
 });
 
 describe("cierre de sesión y datos guardados", () => {
@@ -247,5 +235,168 @@ describe("canales en vivo ligados a su sesión", () => {
     assert.ok((await s1.waitEnd(2000)) !== null, "el canal del dispositivo que cerró sesión se cierra");
     assert.equal(await s2.waitEnd(1000), null, "el otro dispositivo sigue conectado");
     assert.equal((await pc.json("GET", "/api/session")).status, 200);
+  });
+});
+
+describe("escucha ligada a la sesión que la inició (dos dispositivos, misma cuenta)", () => {
+  // Servidor aparte con la entrevista ficticia lenta: la escucha sigue activa durante la prueba.
+  let slow: App;
+  let slowBase: string;
+  let clock = 0;
+
+  before(async () => {
+    slow = createApp(
+      loadConfig({ DEMO_SPEED: "0.25", STATIC_DIR: "public", SESSION_CHECK_MS: "200", DISCONNECT_PAUSE_MS: "60000" }),
+      { now: () => Date.now() + clock },
+    );
+    await new Promise<void>((r) => slow.server.listen(0, "127.0.0.1", r));
+    slowBase = `http://127.0.0.1:${(slow.server.address() as AddressInfo).port}`;
+  });
+  after(() => slow.close());
+  beforeEach(() => {
+    clock = 0;
+  });
+
+  class Device {
+    cookie = "";
+    async json<T>(method: string, path: string, body?: unknown) {
+      const res = await fetch(slowBase + path, {
+        method,
+        headers: { ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...(this.cookie ? { Cookie: this.cookie } : {}) },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+      const sc = res.headers.get("set-cookie");
+      if (sc) this.cookie = /Max-Age=0/.test(sc) ? "" : sc.split(";")[0];
+      return { status: res.status, body: (await res.json()) as T & { error?: string } };
+    }
+    get sid() {
+      return this.cookie.split("=")[1];
+    }
+    async stream(interviewId: string) {
+      const ctrl = new AbortController();
+      const res = await fetch(`${slowBase}/api/interviews/${interviewId}/events`, { headers: { Cookie: this.cookie }, signal: ctrl.signal });
+      assert.equal(res.status, 200);
+      const reader = res.body!.getReader();
+      let text = "";
+      let closed = false;
+      const done = (async () => {
+        const d = new TextDecoder();
+        for (;;) {
+          const r = await reader.read().catch(() => ({ done: true, value: undefined }));
+          if (r.done) {
+            closed = true;
+            return text;
+          }
+          text += d.decode(r.value);
+        }
+      })();
+      return {
+        isClosed: () => closed,
+        text: () => text,
+        waitEnd: (ms: number) => Promise.race([done, new Promise<null>((r) => setTimeout(() => r(null), ms))]),
+        close: () => ctrl.abort(),
+      };
+    }
+  }
+
+  async function device() {
+    const d = new Device();
+    await d.json("POST", "/api/demo/session", { perfil: "demo-a" });
+    return d;
+  }
+
+  /** El PC inicia la escucha y la mira; el teléfono observa la misma entrevista. */
+  async function setup() {
+    const pc = await device();
+    const phone = await device();
+    await pc.json("PATCH", "/api/settings", { idleMinutes: 5 });
+    const { body } = await pc.json<InterviewSnapshot>("POST", "/api/interviews", {});
+    await pc.json("POST", `/api/interviews/${body.id}/consent`, { givenBy: "paciente" });
+    const started = await pc.json<InterviewSnapshot>("POST", `/api/interviews/${body.id}/command`, { command: "iniciar" });
+    assert.equal(started.body.status, "escuchando");
+    const pcStream = await pc.stream(body.id);
+    const phoneStream = await phone.stream(body.id);
+    return { pc, phone, id: body.id, pcStream, phoneStream };
+  }
+
+  async function status(d: Device, id: string) {
+    return (await d.json<InterviewSnapshot>("GET", `/api/interviews/${id}`)).body;
+  }
+
+  it("el teléfono inactivo caduca mientras el PC sigue escuchando", async () => {
+    const { pc, phone, id, pcStream, phoneStream } = await setup();
+    clock = 6 * 60_000; // 6 minutos sin actividad en ningún dispositivo
+    const ended = await phoneStream.waitEnd(3000);
+    assert.ok(ended !== null, "el canal del teléfono inactivo debe cerrarse");
+    assert.match(ended!, /"reason":"inactividad"/);
+    assert.equal((await phone.json("GET", "/api/session")).body.error, "sin_sesion", "la sesión del teléfono caducó");
+    // El PC, que escucha, no caduca ni deja de escuchar.
+    assert.equal(pcStream.isClosed(), false);
+    const pcSession = await pc.json<SessionInfo>("GET", "/api/session");
+    assert.equal(pcSession.status, 200);
+    assert.equal((await status(pc, id)).status, "escuchando");
+    pcStream.close();
+    await pc.json("POST", `/api/interviews/${id}/command`, { command: "detener" });
+  });
+
+  it("cerrar la sesión observadora (teléfono) conserva la escucha del PC", async () => {
+    const { pc, phone, id, pcStream, phoneStream } = await setup();
+    const out = await phone.json("POST", "/api/logout", {});
+    assert.equal(out.status, 200);
+    assert.ok((await phoneStream.waitEnd(2000)) !== null, "el canal del teléfono se cierra");
+    await new Promise((r) => setTimeout(r, 500)); // al menos dos revisiones del servidor
+    assert.equal(pcStream.isClosed(), false, "el canal del PC sigue abierto");
+    const s = await status(pc, id);
+    assert.equal(s.status, "escuchando", "la escucha del PC continúa");
+    pcStream.close();
+    await pc.json("POST", `/api/interviews/${id}/command`, { command: "detener" });
+  });
+
+  it("revocar la sesión que inició la escucha sí la pausa (aunque no tenga pantalla conectada)", async () => {
+    const { pc, phone, id, pcStream, phoneStream } = await setup();
+    pcStream.close(); // el PC ni siquiera tiene el canal abierto
+    await new Promise((r) => setTimeout(r, 100));
+    // Revocación por otra vía (p. ej., cambio de contraseña), sin peticiones del PC.
+    await slow.gate.revoke({ sessionId: pc.sid, user: { id: "demo-a", name: "x" }, createdAt: Date.now() });
+    let s: InterviewSnapshot | undefined;
+    for (let i = 0; i < 20; i++) {
+      s = await status(phone, id);
+      if (s.status !== "escuchando") break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    assert.equal(s!.status, "pausada");
+    assert.equal(s!.pauseReason, "revocada");
+    assert.equal(phoneStream.isClosed(), false, "el teléfono observador sigue conectado");
+    phoneStream.close();
+  });
+
+  it("la sesión que reanuda pasa a ser la dueña de la escucha", async () => {
+    const { pc, phone, id, pcStream, phoneStream } = await setup();
+    await pc.json("POST", `/api/interviews/${id}/command`, { command: "pausar" });
+    await phone.json("POST", `/api/interviews/${id}/command`, { command: "reanudar" });
+    // Ahora cerrar la sesión del PC no pausa (escucha del teléfono)…
+    await pc.json("POST", "/api/logout", {});
+    await pcStream.waitEnd(2000);
+    assert.equal((await status(phone, id)).status, "escuchando");
+    // …y cerrar la del teléfono sí.
+    const other = await device();
+    await phone.json("POST", "/api/logout", {});
+    await phoneStream.waitEnd(2000);
+    const s = await status(other, id);
+    assert.equal(s.status, "pausada");
+    assert.equal(s.pauseReason, "manual");
+  });
+
+  it("la sesión que escucha no se bloquea por inactividad", async () => {
+    const { pc, id, pcStream, phoneStream } = await setup();
+    phoneStream.close();
+    clock = 10 * 60_000;
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(pcStream.isClosed(), false);
+    const r = await pc.json<InterviewSnapshot>("GET", `/api/interviews/${id}`);
+    assert.equal(r.status, 200, String(r.body.error));
+    assert.equal(r.body.status, "escuchando");
+    pcStream.close();
+    await pc.json("POST", `/api/interviews/${id}/command`, { command: "detener" });
   });
 });

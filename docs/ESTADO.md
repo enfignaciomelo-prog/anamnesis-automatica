@@ -67,7 +67,8 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Vencimiento con la app activa | ✅ | Detiene escucha y canales, limpia y exige nuevo inicio de sesión (E2E con reloj de prueba). |
 | App suspendida o cerrada | ✅ / límite | Al reanudar o reabrir se revalida antes de mostrar datos. **No se puede borrar con la app cerrada**; el navegador no garantiza borrado físico puntual. |
 | Aviso 5 minutos antes del corte | ✅ | Intenta guardar los borradores e informa si falla; no retrasa el cierre. |
-| Bloqueo por inactividad configurable | ✅ | 5, 15, 30 o 60 minutos; exigido en servidor; no bloquea mientras se escucha. |
+| Bloqueo por inactividad configurable | ✅ | 5, 15, 30 o 60 minutos; exigido en servidor **por sesión**: solo la sesión que escucha queda exenta, no la cuenta (un teléfono inactivo caduca aunque el PC esté escuchando). |
+| Escucha ligada a su sesión | ✅ | La escucha pertenece a la sesión que la inició o reanudó. Cerrar una sesión observadora no la detiene; revocar, vencer o cerrar la sesión dueña sí la pausa, aunque no tenga pantalla conectada (probado con dos dispositivos de la misma cuenta). |
 | Cierre manual y entre pestañas | ✅ | Propagado a otras pestañas; cancela peticiones; una respuesta tardía no repuebla datos; «Atrás» no muestra contenido clínico (E2E). |
 | Canales en vivo ligados a su sesión | ✅ | El servidor cierra cada canal al llegar el corte (temporizador del servidor), si la sesión se revoca por otra vía (p. ej., cambio de contraseña) o por inactividad, sin esperar otra petición. Cerrar sesión en un dispositivo no cierra los de otro (probado en memoria y PostgreSQL). |
 | TLS con PostgreSQL | ✅ | En producción: TLS obligatorio con verificación del certificado (`DATABASE_CA_CERT`); se rechazan `DATABASE_SSL=disable`, `sslmode` que no verifica y cualquier `rejectUnauthorized:false`. Sin TLS solo para PostgreSQL local de pruebas. |

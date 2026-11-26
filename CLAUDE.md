@@ -131,6 +131,9 @@ borrador de anamnesis según la plantilla seleccionada.
   activa con configuración y confirmación explícitas del profesional.
 - **Canales en vivo:** ligados a su sesión; el servidor los cierra al corte, al
   revocarse la sesión o por inactividad, sin depender del navegador.
+- **Escucha:** pertenece a la sesión que la inició o reanudó; solo esa sesión
+  queda exenta del bloqueo por inactividad y solo su cierre, vencimiento o
+  revocación pausa la escucha (no la de una sesión observadora).
 - **TLS PostgreSQL:** en producción, verificado con `DATABASE_CA_CERT`; prohibido
   `rejectUnauthorized:false`, `DATABASE_SSL=disable` y `sslmode` sin verificación.
 

@@ -116,11 +116,12 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
 
   /** Termina una sesión desde el servidor: revoca, pausa lo que escuchaba y cierra sus canales. */
   async function expireSession(s: AuthSession, reason: string) {
-    const ids = closeSessionStreams(s.sessionId, reason);
+    closeSessionStreams(s.sessionId, reason);
     await gate.revoke(s).catch((e) => logError("revoke", e));
     await store.deleteActivity(s.sessionId).catch(() => undefined);
-    // Se detiene lo que escuchaba esta sesión y cualquier escucha sin pantalla conectada.
-    await service.pauseOrphaned(s.user.id, reason, ids);
+    // Solo se pausa lo que escuchaba ESTA sesión; una sesión observadora no detiene
+    // la escucha iniciada en otro dispositivo.
+    await service.pauseForSession(s.sessionId, reason);
   }
 
   function registerStream(a: { session: AuthSession; cutoffAt: number }, interviewId: string, res: ServerResponse) {
@@ -148,23 +149,30 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
     });
   }
 
-  /** Revisión periódica de sesiones con canales abiertos. */
+  /**
+   * Revisión periódica de sesiones con canales abiertos o con una escucha activa
+   * (aunque no tengan pantalla conectada).
+   */
   async function checkLiveSessions() {
     const t = now();
-    for (const entry of [...liveSessions.values()]) {
-      const s = entry.session;
+    const sessions = new Map<string, { session: AuthSession; cutoffAt: number }>();
+    for (const e of liveSessions.values()) sessions.set(e.session.sessionId, { session: e.session, cutoffAt: e.cutoffAt });
+    for (const ls of service.listeningSessions())
+      if (!sessions.has(ls.sessionId)) sessions.set(ls.sessionId, { session: ls, cutoffAt: nextDailyCutoff(ls.createdAt) });
+    for (const { session: s, cutoffAt } of sessions.values()) {
       try {
-        if (t >= entry.cutoffAt) {
+        if (t >= cutoffAt) {
           await expireSession(s, "corte_diario");
           continue;
         }
         if (!(await gate.isActive(s.sessionId))) {
           // Revocada por otra vía (cierre en otro lugar, cambio de contraseña…).
-          const ids = closeSessionStreams(s.sessionId, "revocada");
-          await service.pauseOrphaned(s.user.id, "revocada", ids);
+          closeSessionStreams(s.sessionId, "revocada");
+          await service.pauseForSession(s.sessionId, "revocada");
           continue;
         }
-        if (!service.isListening(s.user.id)) {
+        // Inactividad por sesión: solo se exime la sesión que está escuchando.
+        if (!service.isListeningSession(s.sessionId)) {
           const p = await store.getProfessional(s.user.id);
           const last = (await store.getActivity(s.sessionId)) ?? s.createdAt;
           if (p && t - last > p.idleMinutes * 60_000) await expireSession(s, "inactividad");
@@ -174,6 +182,7 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
       }
     }
   }
+
   const templates = new TemplateService(store);
   const staticRoot = resolve(config.staticDir);
 
@@ -208,7 +217,8 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
     const last = (await store.getActivity(s.sessionId)) ?? s.createdAt;
     const idleMs = professional.idleMinutes * 60_000;
     // Mientras escucha una entrevista, el profesional está activo aunque no toque la pantalla.
-    const listening = service.isListening(s.user.id);
+    // Exención por inactividad SOLO para la sesión que escucha, no para la cuenta.
+    const listening = service.isListeningSession(s.sessionId);
     if (!listening && t - last > idleMs) {
       await endSession(ctx, s, "inactividad");
       throw new HttpError(401, "bloqueo_inactividad", "La sesión se bloqueó por inactividad. Inicia sesión de nuevo.");
@@ -412,7 +422,7 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
             if (!["iniciar", "pausar", "reanudar", "detener"].includes(cmd))
               throw new HttpError(400, "comando_invalido", "Acción no válida.");
             const reason = typeof body.reason === "string" && /^[a-z_-]{1,30}$/.test(body.reason) ? body.reason : null;
-            return sendJson(res, 200, await service.command(p.id, id, cmd, reason));
+            return sendJson(res, 200, await service.command(p.id, id, cmd, reason, authed.session));
           }
           if (sub === "speakers")
             return sendJson(res, 200, await service.setRole(p.id, id, Number(body.speaker), body.role as SpeakerRole));
