@@ -23,6 +23,8 @@ export interface Config {
   disconnectPauseMs: number;
   /** OCR de PDF escaneados (requiere tesseract y pdftoppm en el servidor). */
   ocr: boolean;
+  /** Reloj ajustable para pruebas E2E del corte diario (nunca en producción). */
+  testClock: boolean;
   providers: { anthropic: boolean; deepgram: boolean; database: boolean };
   database?: { url: string; ssl: "disable" | "require"; caCert?: string };
   auth?: { secret: string; baseUrl: string };
@@ -52,6 +54,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     staticDir: env.STATIC_DIR ?? "dist",
     disconnectPauseMs: Number(env.DISCONNECT_PAUSE_MS ?? 8000),
     ocr: env.OCR !== "false",
+    testClock: env.ALLOW_TEST_CLOCK === "true" && !production && demo,
     providers,
   };
   if (demo) return base;

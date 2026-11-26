@@ -119,7 +119,7 @@ def main() -> int:
 
         assert not errors, errors
         browser.close()
-    print("E2E OK: plantillas propias (Word y Excel) en tamaño iPhone")
+    print("E2E OK: plantillas propias Word y Excel (emulación Chromium tamaño iPhone, no Safari real)")
     return 0
 
 

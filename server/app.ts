@@ -71,7 +71,8 @@ export interface AppDeps {
 
 export function createApp(config: Config, deps: AppDeps = {}): App {
   const store = deps.store ?? new MemoryStore();
-  const now = deps.now ?? (() => Date.now());
+  let testOffset = 0;
+  const now = deps.now ?? (() => Date.now() + testOffset);
   const ensureProfessional = async (id: string, name: string) => {
     const p = await store.getProfessional(id);
     if (!p)
@@ -82,7 +83,7 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
         idleMinutes: config.idleDefaultMinutes,
       });
   };
-  const gate = deps.gate ?? new DemoAuth(ensureProfessional);
+  const gate = deps.gate ?? new DemoAuth(ensureProfessional, now);
   const service = new InterviewService(store, config);
   const templates = new TemplateService(store);
   const staticRoot = resolve(config.staticDir);
@@ -185,6 +186,19 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
     if (await gate.handle(req, res, url, ctx.https)) {
       if (ctx.route === "?") ctx.route = "/api/demo/session";
       return;
+    }
+
+    // Reloj de prueba (solo E2E en modo demo, nunca en producción).
+    if (parts[1] === "dev" && parts[2] === "clock" && m === "POST" && config.testClock) {
+      ctx.route = "/api/dev/clock";
+      const body = await readJson(req);
+      const target = Number(body.secondsBeforeCutoff);
+      const s = await gate.getSession(req);
+      if (!s || !Number.isFinite(target)) throw new HttpError(400, "reloj", "Parámetros no válidos.");
+      testOffset = nextDailyCutoff(s.createdAt) - target * 1000 - Date.now();
+      // Simula una sesión que estuvo activa hasta ese momento (no prueba la inactividad).
+      await store.touchActivity(s.sessionId, now());
+      return sendJson(res, 200, { ok: true });
     }
 
     if (parts[1] === "session" && m === "GET") {

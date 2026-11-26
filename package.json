@@ -17,7 +17,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
     "test": "node --import tsx --test tests/unit/*.test.ts",
-    "test:e2e": "python3 .claude/skills/webapp-testing/scripts/with_server.py --server \"exec env DEMO_SPEED=20 PORT=4173 node --import tsx server/index.ts\" --port 4173 -- python3 tests/e2e/run_all.py",
+    "test:e2e": "python3 .claude/skills/webapp-testing/scripts/with_server.py --server \"exec env DEMO_SPEED=20 ALLOW_TEST_CLOCK=true PORT=4173 node --import tsx server/index.ts\" --port 4173 -- python3 tests/e2e/run_all.py",
     "fixtures": "python3 scripts/make-fixtures.py",
     "typecheck:offline": "tsc -p tsconfig.offline.json --noEmit"
   },

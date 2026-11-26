@@ -19,7 +19,10 @@ export class DemoAuth implements AuthGate {
   readonly mode = "demo" as const;
   private sessions = new Map<string, { id: string; userId: string; createdAt: number; expiresAt: number }>();
 
-  constructor(private onLogin: (userId: string, name: string) => Promise<void>) {}
+  constructor(
+    private onLogin: (userId: string, name: string) => Promise<void>,
+    private now: () => number = () => Date.now(),
+  ) {}
 
   async handle(req: IncomingMessage, res: ServerResponse, url: URL, https: boolean) {
     if (url.pathname !== "/api/demo/session" || req.method !== "POST") return false;
@@ -27,7 +30,7 @@ export class DemoAuth implements AuthGate {
     const perfil = body.perfil as keyof typeof DEMO_PROFESSIONALS;
     if (!(perfil in DEMO_PROFESSIONALS)) throw new HttpError(400, "perfil_invalido", "Perfil de demostración no válido.");
     await this.onLogin(perfil, DEMO_PROFESSIONALS[perfil]);
-    const now = Date.now();
+    const now = this.now();
     const s = { id: randomBytes(32).toString("base64url"), userId: perfil, createdAt: now, expiresAt: now + TTL_MS };
     this.sessions.set(s.id, s);
     res.setHeader(
@@ -42,7 +45,7 @@ export class DemoAuth implements AuthGate {
     const sid = parseCookies(req.headers.cookie)[COOKIE];
     const s = sid ? this.sessions.get(sid) : undefined;
     if (!s) return null;
-    if (s.expiresAt < Date.now()) {
+    if (s.expiresAt < this.now()) {
       this.sessions.delete(s.id);
       return null;
     }

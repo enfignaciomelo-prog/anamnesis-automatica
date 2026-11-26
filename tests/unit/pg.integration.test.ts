@@ -133,7 +133,13 @@ describe("PostgreSQL + Better Auth (integración real)", { skip }, () => {
       STATIC_DIR: "public",
       OCR: "false",
     });
-    await start();
+    try {
+      await start();
+    } catch (e) {
+      // Diagnóstico del arranque (sin secretos): tipo y mensaje del error.
+      console.error("ARRANQUE_PG_FALLÓ", e instanceof Error ? `${e.name}: ${e.message}\n${e.stack}` : e);
+      throw e;
+    }
   });
   after(async () => {
     await app?.close();

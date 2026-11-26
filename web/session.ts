@@ -47,7 +47,8 @@ let ending = false;
 
 const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("aa-sesion") : null;
 channel?.addEventListener("message", (e) => {
-  if ((e as MessageEvent).data?.type === "fin") void endSession((e as MessageEvent).data.reason ?? "otra_pestana", false);
+  // En las demás pestañas el motivo es siempre «otra pestaña».
+  if ((e as MessageEvent).data?.type === "fin") void endSession("otra_pestana", false);
 });
 
 function set(patch: Partial<State>) {
@@ -155,7 +156,11 @@ export async function verify(reason: string): Promise<SessionInfo | null> {
     const res = await fetch("/api/session", { credentials: "same-origin", cache: "no-store" });
     if (res.status === 401) {
       const data = await res.json().catch(() => ({}));
-      await endSession(data.error ?? reason, true);
+      let why: string = data.error ?? reason;
+      // Otra petición pudo vencer la sesión primero: se explica la causa real.
+      if (why === "sin_sesion" && session && serverNow() >= Date.parse(session.cutoffAt)) why = "sesion_vencida";
+      else if (why === "sin_sesion" && session && serverNow() >= Date.parse(session.expiresAt)) why = "bloqueo_inactividad";
+      await endSession(why, true);
       return null;
     }
     if (!res.ok) throw new Error(String(res.status));
