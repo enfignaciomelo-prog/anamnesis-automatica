@@ -8,10 +8,12 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 import type { SessionInfo, SpeakerRole } from "../shared/types";
 import type { Config } from "./config";
 import { exportDocx, exportPdf, exportText } from "./export/exporters";
-import { HttpError, parseCookies, readJson, securityHeaders, sendJson } from "./http";
+import { HttpError, parseCookies, readJson, readRaw, securityHeaders, sendJson } from "./http";
 import { type Command, InterviewService } from "./interviews";
 import { logError, logRequest } from "./log";
 import { MemoryStore, type Store } from "./store";
+import { MAX_UPLOAD_BYTES } from "./templates/safety";
+import { TemplateService } from "./templates/service";
 
 const SESSION_COOKIE = "aa_sid";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
@@ -44,6 +46,7 @@ interface Ctx {
 export interface App {
   server: Server;
   service: InterviewService;
+  templates: TemplateService;
   store: Store;
   close(): Promise<void>;
 }
@@ -51,6 +54,9 @@ export interface App {
 export function createApp(config: Config): App {
   const store = new MemoryStore();
   const service = new InterviewService(store, config);
+  const templates = new TemplateService(store);
+  const fileInUse = (ownerId: string) => (fileId: string) =>
+    store.listInterviews(ownerId).some((r) => r.template.source?.fileId === fileId);
   const staticRoot = resolve(config.staticDir);
 
   const isHttps = (req: IncomingMessage) =>
@@ -150,13 +156,59 @@ export function createApp(config: Config): App {
       return sendJson(res, 200, sessionInfo(p));
     }
 
+    if (parts[1] === "templates") {
+      const p = requireAuth(ctx);
+      const id = parts[2];
+      if (!id) {
+        ctx.route = "/api/templates";
+        if (m === "GET") return sendJson(res, 200, templates.list(p.id));
+        if (m === "POST") {
+          const body = await readJson(req, 256 * 1024);
+          const fromId = typeof body.fromId === "string" ? body.fromId : undefined;
+          return sendJson(res, 201, templates.create(p.id, body, fromId));
+        }
+      } else if (id === "import") {
+        if (!parts[3] && m === "POST") {
+          ctx.route = "/api/templates/import";
+          let name = "";
+          try {
+            name = decodeURIComponent(String(req.headers["x-file-name"] ?? ""));
+          } catch {
+            name = "";
+          }
+          const bytes = await readRaw(req, MAX_UPLOAD_BYTES);
+          return sendJson(res, 200, await templates.analyze(p.id, name, bytes, config.ocr));
+        }
+        if (parts[3] && parts[4] === "confirm" && m === "POST") {
+          ctx.route = "/api/templates/import/:id/confirm";
+          const body = await readJson(req, 256 * 1024);
+          return sendJson(res, 201, await templates.confirmImport(p.id, parts[3], body));
+        }
+      } else {
+        ctx.route = "/api/templates/:id";
+        if (m === "GET") {
+          const v = Number(url.searchParams.get("version"));
+          return sendJson(res, 200, templates.detail(p.id, id, Number.isInteger(v) && v > 0 ? v : undefined));
+        }
+        if (m === "PUT") return sendJson(res, 200, await templates.update(p.id, id, await readJson(req, 256 * 1024)));
+        if (m === "DELETE") {
+          templates.delete(p.id, id, fileInUse(p.id));
+          return sendJson(res, 200, { ok: true });
+        }
+      }
+    }
+
     if (parts[1] === "interviews") {
       const p = requireAuth(ctx);
       const id = parts[2];
       if (!id) {
         ctx.route = "/api/interviews";
         if (m === "GET") return sendJson(res, 200, service.list(p.id));
-        if (m === "POST") return sendJson(res, 201, service.read(p.id, service.create(p.id).id));
+        if (m === "POST") {
+          const body = await readJson(req);
+          const template = templates.resolve(p.id, typeof body.templateId === "string" ? body.templateId : undefined);
+          return sendJson(res, 201, service.read(p.id, service.create(p.id, template).id));
+        }
       } else {
         const sub = parts[3];
         ctx.route = `/api/interviews/:id${sub ? `/${sub}` : ""}${parts[4] ? "/:field" : ""}${parts[5] ? `/${parts[5]}` : ""}`;
@@ -209,7 +261,7 @@ export function createApp(config: Config): App {
             throw new HttpError(409, "no_finalizada", "Finaliza la revisión antes de exportar.");
           const opts = { includeEvidence: url.searchParams.get("respaldo") === "1", professionalName: p.name };
           const format = url.searchParams.get("format");
-          const base = `anamnesis-${snap.demo ? "demo-" : ""}${snap.createdAt.slice(0, 10)}`;
+          const base = `anamnesis-${snap.demo ? "demo-" : ""}${snap.createdAt.slice(0, 10)}${format === "original" ? "-formato-original" : ""}`;
           let body: Buffer;
           let type: string;
           let ext: string;
@@ -225,6 +277,14 @@ export function createApp(config: Config): App {
             body = await exportPdf(snap, opts);
             type = "application/pdf";
             ext = "pdf";
+          } else if (format === "original") {
+            const out = await templates.exportOriginal(p.id, snap);
+            body = out.bytes;
+            ext = out.kind;
+            type =
+              out.kind === "xlsx"
+                ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
           } else throw new HttpError(400, "formato_invalido", "Formato no disponible.");
           res.writeHead(200, {
             "Content-Type": type,
@@ -320,6 +380,7 @@ export function createApp(config: Config): App {
     server,
     service,
     store,
+    templates,
     close: () =>
       new Promise<void>((done) => {
         clearInterval(sweepTimer);

@@ -184,6 +184,20 @@ describe("API", () => {
     assert.equal((await c.req("GET", `/api/interviews/${id}`)).status, 404);
   });
 
+  it("una nueva atención no arrastra datos de la anterior", async () => {
+    const c = await login("demo-a");
+    await fullInterview(c);
+    const { body } = await c.json("POST", "/api/interviews", {});
+    assert.equal(body.segments.length, 0);
+    assert.deepEqual(body.speakerRoles, {});
+    assert.equal(body.consent, null);
+    for (const f of Object.values(body.fields)) {
+      assert.equal(f.status, "no_referido", f.fieldId);
+      assert.equal(f.items.length, 0);
+      assert.equal(f.professionalValue, null);
+    }
+  });
+
   it("pausa automáticamente si se pierde la conexión con la interfaz", async () => {
     const c = await login("demo-a");
     const { body } = await c.json("POST", "/api/interviews", {});

@@ -170,7 +170,8 @@ textarea:focus-visible {
 }
 
 select,
-textarea {
+textarea,
+input[type="text"] {
   font: 16px/1.4 var(--ui); /* 16 px evita el zoom automático de Safari */
   color: var(--ink);
   background: var(--surface);
@@ -763,4 +764,70 @@ select {
   .interview {
     padding-bottom: 2rem;
   }
+}
+
+/* Plantillas */
+.block {
+  display: block;
+}
+.field-label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0.75rem 0 0.25rem;
+}
+.btn.wide-secondary {
+  width: 100%;
+  margin: 0 0 1rem;
+}
+.templates .stack {
+  margin: 1rem 0 0.5rem;
+}
+label.btn {
+  cursor: pointer;
+}
+.warnings {
+  padding-left: 1.1rem;
+  color: var(--rev);
+  font-size: 0.9rem;
+}
+.section-title input {
+  font-weight: 650;
+  font-size: 1.05rem;
+}
+.tpl-field {
+  padding: 0.6rem 0 0.9rem 0.85rem;
+  border-left: 4px solid var(--prop);
+  border-bottom: 1px solid var(--line);
+}
+.tpl-field.excluded {
+  border-left-color: var(--line);
+  opacity: 0.6;
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 0.75rem;
+}
+@media (min-width: 640px) {
+  .grid2 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.warn-tag {
+  color: var(--rev);
+}
+.sticky-actions {
+  position: sticky;
+  bottom: 0;
+  padding: 0.7rem 0 calc(0.7rem + env(safe-area-inset-bottom));
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+  margin-top: 1.25rem;
+}
+.versions {
+  padding-left: 1.1rem;
+}
+.editor {
+  max-width: 820px;
 }

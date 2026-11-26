@@ -7,6 +7,9 @@ COPY . .
 RUN npm run build
 
 FROM node:22-slim
+# OCR en español para PDF escaneados (opcional: sin esto se piden los campos a mano).
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa poppler-utils \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production DEMO_MODE=true TRUST_PROXY=true STATIC_DIR=dist PORT=3000
 COPY package.json ./

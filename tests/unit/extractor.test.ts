@@ -108,4 +108,45 @@ describe("extractor de demostración", () => {
     const r = run([{ speaker: 1, text: "¿Toma metformina o es alérgico a algo?" }]);
     assert.equal(r.items.length, 0);
   });
+
+  describe("casos pedidos por el profesional", () => {
+    const r = run([
+      { speaker: 1, text: "¿Hay enfermedades en su familia?" },
+      { speaker: 2, text: "Mi mamá tiene diabetes, yo no." },
+      { speaker: 1, text: "¿Qué medicamentos toma?" },
+      { speaker: 2, text: "Antes tomaba losartán." },
+      { speaker: 2, text: "Ahora tomo metformina, creo que son 500 mg." },
+      { speaker: 1, text: "¿Alergias?" },
+      { speaker: 2, text: "Creo que soy alérgica a la penicilina." },
+    ]);
+
+    it("«Mi mamá tiene diabetes, yo no»: familiar y negación del paciente", () => {
+      assert.equal(r.fields.familiares.items[0].classification, "familiar");
+      assert.match(r.fields.familiares.items[0].value, /Mi mamá tiene diabetes/);
+      const m = r.fields.morbidos.items;
+      assert.equal(m.length, 1);
+      assert.equal(m[0].classification, "negado");
+      assert.match(m[0].value, /^Niega diabetes/);
+    });
+
+    it("«Antes tomaba losartán»: histórico, no tratamiento actual", () => {
+      const los = r.fields.medicamentos.items.find((i) => /losart/i.test(i.value))!;
+      assert.equal(los.classification, "historico");
+      const met = r.fields.medicamentos.items.find((i) => /metformina/i.test(i.value))!;
+      assert.equal(met.classification, "actual");
+    });
+
+    it("dosis y alergia dudosas quedan para revisión", () => {
+      assert.equal(r.fields.medicamentos.status, "requiere_revision");
+      assert.ok(r.fields.medicamentos.reasons.includes("incertidumbre"));
+      assert.ok(r.fields.medicamentos.reasons.includes("dosis"));
+      assert.equal(r.fields.alergias.status, "requiere_revision");
+      assert.ok(r.fields.alergias.reasons.includes("incertidumbre"));
+    });
+
+    it("lo no mencionado queda No referido", () => {
+      for (const id of ["tabaco", "alcohol", "quirurgicos", "cardiorrespiratorio", "gineco"])
+        assert.equal(r.fields[id].status, "no_referido", id);
+    });
+  });
 });

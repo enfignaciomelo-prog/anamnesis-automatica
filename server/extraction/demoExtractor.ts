@@ -9,13 +9,13 @@
 import type {
   Classification,
   Evidence,
-  FieldId,
   ProposalItem,
   ReviewReason,
   Segment,
   SpeakerRole,
   Template,
 } from "../../shared/types";
+import { conceptInfo } from "../../shared/concepts";
 import { allFields } from "../../shared/template-generic";
 
 export function norm(s: string): string {
@@ -26,7 +26,8 @@ export function norm(s: string): string {
 }
 
 interface LexEntry {
-  field: FieldId;
+  /** Tipo de dato (concepto), no el id del campo de la plantilla. */
+  field: string;
   re: RegExp;
   /** Etiqueta para negaciones explícitas, si difiere de la del campo. */
   neg?: string;
@@ -87,7 +88,7 @@ const FREQ_RE =
 /** Divide un segmento en cláusulas conservando el texto original. */
 export function splitClauses(text: string): string[] {
   return text
-    .split(/(?<=[.;!?])\s+|,\s*pero\s+|\s+pero\s+|,\s*(?=ahora\b|actualmente\b)|,\s*y\s+|\s+y\s+(?=mi\s|su\s)/i)
+    .split(/(?<=[.;!?])\s+|,\s*pero\s+|\s+pero\s+|,\s*(?=ahora\b|actualmente\b|yo\b)|,\s*y\s+|\s+y\s+(?=mi\s|su\s)/i)
     .map((c) => c.trim().replace(/[.;]+$/, ""))
     .filter((c) => c.length > 0);
 }
@@ -115,8 +116,11 @@ export function extractDemo(
   roles: Record<number, SpeakerRole>,
   template: Template,
 ): ProposalItem[] {
-  const fieldIds = new Set(allFields(template).filter((f) => !f.manualOnly).map((f) => f.id));
-  const fieldDef = new Map(allFields(template).map((f) => [f.id, f]));
+  // Concepto → primer campo de la plantilla que lo usa.
+  const byConcept = new Map<string, ReturnType<typeof allFields>[number]>();
+  for (const f of allFields(template))
+    if (f.concept && !f.manualOnly && !byConcept.has(f.concept)) byConcept.set(f.concept, f);
+  const fieldIds = new Set(byConcept.keys());
   const items: ProposalItem[] = [];
 
   segments.forEach((original, idx) => {
@@ -142,9 +146,10 @@ export function extractDemo(
 
     // Motivo de consulta: respuesta completa a la pregunta por el motivo.
     if (context && MOTIVO_Q.test(norm(context.text)) && fieldIds.has("motivo")) {
+      const motivoField = byConcept.get("motivo")!;
       items.push({
-        id: `${seg.id}:m:motivo`,
-        fieldId: "motivo",
+        id: `${seg.id}:m:${motivoField.id}`,
+        fieldId: motivoField.id,
         value: `${prefix(role)} «${cleanQuote(seg.text.replace(/[.]$/, ""))}»`,
         classification: "actual",
         evidence: [ev(seg, seg.text, context)],
@@ -152,6 +157,8 @@ export function extractDemo(
       });
     }
 
+    // Término clínico del último antecedente familiar («Mi mamá tiene diabetes, yo no»).
+    let familyTerm: { concept: string; term: string } | null = null;
     splitClauses(seg.text).forEach((rawClause, ci) => {
       let clause = rawClause;
       let corrected: ProposalItem["corrected"];
@@ -165,6 +172,26 @@ export function extractDemo(
       }
       const n = norm(clause);
       const family = FAMILY_RE.test(n);
+
+      // Negación elíptica del paciente tras un antecedente familiar: «…, yo no».
+      if (/^yo no\b/.test(n) && familyTerm && fieldIds.has(familyTerm.concept)) {
+        const def = byConcept.get(familyTerm.concept)!;
+        items.push({
+          id: `${seg.id}:${ci}:${def.id}`,
+          fieldId: def.id,
+          value: `Niega ${familyTerm.term} (lo refiere en un familiar, no en sí mismo/a)`,
+          classification: "negado",
+          evidence: [ev(seg, seg.text)],
+          reasons: [...baseReasons],
+        });
+        familyTerm = null;
+        return;
+      }
+      if (family) {
+        const hit = LEXICON.find((e) => e.field === "morbidos" && e.re.test(n));
+        const term = hit ? n.match(hit.re)?.[0] : undefined;
+        familyTerm = hit && term ? { concept: "morbidos", term } : null;
+      }
 
       // Vocativos o muletillas sueltas («Mamá», «Ah») no son información.
       if (wordCount(clause) <= 1 && !/^(si|no)$/.test(n.replace(/[^a-z]/g, ""))) return;
@@ -199,15 +226,16 @@ export function extractDemo(
       for (const m of matches) {
         if (seen.has(m.field)) continue;
         seen.add(m.field);
-        const def = fieldDef.get(m.field)!;
+        const def = byConcept.get(m.field)!;
+        const info = conceptInfo(m.field);
         const reasons: ReviewReason[] = [...baseReasons];
         if (uncertain) reasons.push("incertidumbre");
-        if (def.critical) reasons.push("critico");
+        if (def.critical || info?.critical) reasons.push("critico");
         if (m.field === "medicamentos" && (n.match(DOSE_RE) || n.match(FREQ_RE))) reasons.push("dosis");
 
         let value: string;
         if (classification === "negado") {
-          value = `Niega ${m.neg ?? def.negationLabel ?? def.label.toLowerCase()}`;
+          value = `Niega ${m.neg ?? def.negationLabel ?? info?.negationLabel ?? def.label.toLowerCase()}`;
         } else if (viaContext) {
           value = `Responde «${cleanQuote(clause)}» a «${context!.text.trim()}»`;
         } else {
@@ -215,8 +243,8 @@ export function extractDemo(
         }
         const key = typeof m.key === "function" ? m.key(n) : m.key;
         items.push({
-          id: `${seg.id}:${ci}:${m.field}`,
-          fieldId: m.field,
+          id: `${seg.id}:${ci}:${def.id}`,
+          fieldId: def.id,
           value,
           classification,
           evidence: [ev(seg, rawClause, viaContext || negated ? context : undefined)],
@@ -257,7 +285,7 @@ export function markContradictions(items: ProposalItem[]) {
     const k = `${it.fieldId}::${it.key ?? ""}`;
     byField.set(k, [...(byField.get(k) ?? []), it]);
   }
-  for (const [k, group] of byField) {
+  for (const group of byField.values()) {
     if (group.length < 2) continue;
     const flag = (a: ProposalItem, b: ProposalItem) => {
       for (const x of [a, b]) if (!x.reasons.includes("contradiccion")) x.reasons.push("contradiccion");
@@ -273,7 +301,7 @@ export function markContradictions(items: ProposalItem[]) {
           continue;
         }
         // Medicamentos: misma droga con dosis o frecuencia distintas.
-        if (k.startsWith("medicamentos::") && a.key) {
+        if (a.reasons.includes("critico") && a.key) {
           const qa = a.evidence[0].quote;
           const qb = b.evidence[0].quote;
           const fa = tokens(qa, FREQ_RE);

@@ -14,7 +14,21 @@ export class HttpError extends Error {
 
 export const MAX_JSON_BYTES = 64 * 1024;
 
-export async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+export async function readRaw(req: IncomingMessage, limit: number): Promise<Buffer> {
+  const declared = Number(req.headers["content-length"] ?? 0);
+  if (declared > limit) throw new HttpError(413, "muy_grande", "El archivo supera el tamaño máximo (5 MB).");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > limit) throw new HttpError(413, "muy_grande", "El archivo supera el tamaño máximo (5 MB).");
+    chunks.push(c as Buffer);
+  }
+  if (!size) throw new HttpError(400, "vacio", "El archivo está vacío.");
+  return Buffer.concat(chunks);
+}
+
+export async function readJson(req: IncomingMessage, limit = MAX_JSON_BYTES): Promise<Record<string, unknown>> {
   const type = req.headers["content-type"] ?? "";
   if (!type.startsWith("application/json"))
     throw new HttpError(415, "tipo_no_soportado", "Se esperaba JSON.");
@@ -22,7 +36,7 @@ export async function readJson(req: IncomingMessage): Promise<Record<string, unk
   let size = 0;
   for await (const c of req) {
     size += (c as Buffer).length;
-    if (size > MAX_JSON_BYTES) throw new HttpError(413, "muy_grande", "La solicitud es demasiado grande.");
+    if (size > limit) throw new HttpError(413, "muy_grande", "La solicitud es demasiado grande.");
     chunks.push(c as Buffer);
   }
   if (!size) return {};

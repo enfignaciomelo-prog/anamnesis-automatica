@@ -52,6 +52,13 @@ def main() -> int:
         expect(page.locator(".interim")).to_be_visible(timeout=5000)
         shot(page, "03-escuchando")
 
+        # Pausar y reanudar con los controles.
+        page.get_by_role("button", name="Pausar").click()
+        expect(page.locator(".listen-pausada")).to_be_visible()
+        expect(page.locator(".interim")).to_have_count(0)
+        page.get_by_role("button", name="Reanudar").click()
+        expect(page.locator(".listen-escuchando")).to_be_visible()
+
         # Simula que la app pasa a segundo plano (llamada, bloqueo): debe pausar.
         page.evaluate("""() => {
             Object.defineProperty(document, 'visibilityState', {value: 'hidden', configurable: true});

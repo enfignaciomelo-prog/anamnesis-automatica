@@ -2,10 +2,14 @@
 
 Instrucciones permanentes para Claude Code en este repositorio.
 
-## Requisito de trabajo: solo desde el teléfono
+## Requisito de trabajo: realizable desde el teléfono
 
-El responsable trabaja **exclusivamente desde un iPhone**, con Claude Code en la
-nube (app Claude o claude.ai/code en Safari) y GitHub en Safari.
+El responsable trabaja desde un iPhone o un PC, con Claude Code en la nube
+(app Claude o claude.ai/code) y GitHub en el navegador. **Todo el procedimiento
+debe seguir siendo realizable solo desde Safari o la app móvil.**
+
+- En una sesión de nube, `localhost` no es accesible desde el teléfono ni el PC:
+  para probar, usar la versión desplegada por HTTPS.
 
 - Nunca indicar pasos que requieran computador, terminal local, PowerShell,
   instalar programas en el teléfono o editar archivos a mano fuera de GitHub web.
@@ -92,6 +96,11 @@ borrador de anamnesis según la plantilla seleccionada.
 - **Despliegue de demostración:** Render (`render.yaml`), configurable desde
   Safari. Alternativa: `Dockerfile`.
 - **Estado real/simulado/pendiente:** mantener `docs/ESTADO.md` al día en cada PR.
+- **Plantillas:** cada campo puede tener un «tipo de dato» (`shared/concepts.ts`)
+  que el extractor usa; los campos sin tipo se completan a mano. Versiones
+  inmutables; la entrevista copia la versión usada. Exportación en formato
+  original solo en destinos confirmados (marcador, línea o celda); en Excel se
+  escribe texto y nunca se tocan fórmulas. Archivos de prueba en `tests/fixtures`.
 
 ## Entorno de nube de Claude Code
 
@@ -126,8 +135,7 @@ No agregar plugins ni skills de terceros sin justificar su utilidad en la PR.
 
 0. Preparación del repositorio y skills. ✅
 1. Demostración funcional. ✅ (ver `docs/ESTADO.md`)
-2. Plantillas propias: edición, versionado, importación DOCX/XLSX, luego PDF
-   con texto y OCR con revisión manual; mapeo hoja/celda y marcadores Word.
+2. Plantillas propias. ✅ (OCR depende de tesseract en el servidor)
 3. Micrófono y transcripción real con Deepgram.
 4. Llenado con Claude (salida estructurada con respaldo literal).
 5. Cuentas, seguridad y persistencia en PostgreSQL.
