@@ -1,6 +1,8 @@
 # Estado de Anamnesis Automática
 
-Última actualización: etapa 2 (plantillas propias), 26-11-2026.
+Última actualización: cuentas, persistencia y corte diario, 26-11-2026.
+
+Orden vigente (decisión del responsable): 1) cuentas y persistencia ✅, 2) vencimiento diario y limpieza local ✅, 3) modo offline cifrado y sincronización ⏳, 4) micrófono y transcripción ⏳, 5) llenado con Claude ⏳. Voz e IA offline: capacidad posterior por evaluar.
 
 **Leyenda:** ✅ Real (funciona de verdad) · 🧪 Simulado (funciona con datos o
 lógica de demostración) · ⏳ Pendiente (no existe aún)
@@ -48,22 +50,33 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Separación entre profesionales | ✅ | Plantillas y archivos originales accesibles solo por su dueño (probado). |
 | Persistencia de plantillas | 🧪 | En memoria, como el resto de la demo (PostgreSQL: etapa 5). |
 
-## Cuentas, seguridad y privacidad
+## Cuentas, persistencia y sesión
 
 | Función | Estado | Detalle |
 |---|---|---|
-| Cuentas individuales | 🧪 | Dos perfiles ficticios sin contraseña. Cuentas reales: etapa 5. |
-| Separación de datos entre profesionales | ✅ | Verificada en el servidor en cada ruta (probado: 404 para recursos ajenos). |
-| Persistencia | 🧪 | En memoria: se pierde al reiniciar el servidor. PostgreSQL: etapa 5. |
-| Retención configurable y eliminación | ✅ | 15 min, 1 h, 4 h o 12 h; botón para eliminar. |
-| Audio no guardado | ✅ | No existe audio en esta etapa; el diseño no lo almacena. |
-| Sin contenido clínico en registros | ✅ | Solo método, ruta normalizada, estado y duración (probado). |
-| Sin datos clínicos en el navegador | ✅ | Sin localStorage, sessionStorage ni IndexedDB (probado). |
-| Service worker sin caché clínica | ✅ | Ignora `/api/` (probado). |
-| Cabeceras de seguridad, cookie HttpOnly/SameSite, verificación de origen | ✅ | |
-| Explicación de datos por proveedor | ✅ | Pantalla «Qué datos se usan y dónde». |
-| No ejecutar macros ni instrucciones de archivos | ✅ | Ver «Seguridad de archivos». |
-| Claves solo en servidor | ✅ | Se leen de variables de entorno; hoy no se usan. |
+| Correo y contraseña con Better Auth | ✅ código / ⚠️ externo | Biblioteca mantenida (sin criptografía propia). Probado en CI con PostgreSQL 16 real; falta probar con Supabase y Resend reales. |
+| Verificación de correo obligatoria | ✅ | Sin verificar no se puede entrar (probado). En producción el correo de prueba está prohibido. |
+| Recuperación de contraseña | ✅ | Enlace por correo; revoca las sesiones anteriores (probado). |
+| Adaptador de correo de pruebas | ✅ | Bandeja en memoria, solo fuera de producción. |
+| Persistencia en PostgreSQL | ✅ código / ⚠️ externo | Anamnesis, plantillas, archivos originales y ajustes por propietario. Sobreviven a un reinicio y permiten exportar después (probado en CI). Supabase São Paulo pendiente de conectar. |
+| Esquema propio y RLS | ✅ | Esquema `anamnesis` (no expuesto por la API de Supabase), RLS activado en todas las tablas. |
+| Separación entre profesionales | ✅ | Identidad tomada de la sesión del servidor; lectura, edición, eliminación, eventos, archivos y exportaciones verificadas (404 para recursos ajenos, probado en memoria y PostgreSQL). |
+| Mis anamnesis: búsqueda por fecha y estado | ✅ | Borrador / Revisada; fechas en hora de Chile; última modificación visible. |
+| Autoguardado con confirmación del servidor | ✅ | «Guardando», «Guardado» (solo con respuesta del servidor) y «Error al guardar»; el texto en edición se guarda como borrador sin confirmarlo. |
+| Corte diario 23:59 America/Santiago | ✅ | Calculado con zona horaria (probado en 2025–2027 con cambios de horario). Exigido en el servidor; sin bucle al volver a entrar. |
+| Vencimiento con la app activa | ✅ | Detiene escucha y canales, limpia y exige nuevo inicio de sesión (E2E con reloj de prueba). |
+| App suspendida o cerrada | ✅ / límite | Al reanudar o reabrir se revalida antes de mostrar datos. **No se puede borrar con la app cerrada**; el navegador no garantiza borrado físico puntual. |
+| Aviso 5 minutos antes del corte | ✅ | Intenta guardar los borradores e informa si falla; no retrasa el cierre. |
+| Bloqueo por inactividad configurable | ✅ | 5, 15, 30 o 60 minutos; exigido en servidor; no bloquea mientras se escucha. |
+| Cierre manual y entre pestañas | ✅ | Propagado a otras pestañas; cancela peticiones; una respuesta tardía no repuebla datos; «Atrás» no muestra contenido clínico (E2E). |
+| Cookies | ✅ | HttpOnly, SameSite, Secure con HTTPS; verificación de origen en cambios. |
+| Sin datos clínicos en el navegador | ✅ | Sin localStorage, sessionStorage ni IndexedDB; caché solo pública; limpieza de versiones anteriores; `Clear-Site-Data` al cerrar. |
+| Retención y eliminación configurables | ✅ | Modo cuentas: 7, 30, 90 o 365 días sin actividad; botón para eliminar. |
+| Audio no guardado | ✅ | No existe audio todavía; el diseño no lo almacena. |
+| Sin contenido clínico en registros | ✅ | Probado. |
+| Explicación de datos por proveedor | ✅ | Incluye Supabase y Resend. |
+| No ejecutar macros ni instrucciones de archivos | ✅ | Ver plantillas. |
+| Claves solo en servidor | ✅ | Variables de entorno; ver `docs/DESPLIEGUE.md`. |
 
 ## Plataforma
 
@@ -74,15 +87,16 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Backend sirve la interfaz compilada | ✅ | Un solo proceso Node. |
 | Compilación con Vite | ✅ | Verificada en la CI de GitHub. En el entorno de Claude Code sin registro npm se usa esbuild. |
 | Verificación de tipos (interfaz y servidor) | ✅ | `tsc` en la CI de GitHub. |
-| Despliegue HTTPS de demostración | ⏳ | `render.yaml` y `Dockerfile` preparados, sin probar. |
-| Prueba en Safari/WebKit real | ⏳ | WebKit no está instalado aquí; pendiente en tu iPhone tras el despliegue. |
+| Despliegue HTTPS | ⏳ | `render.yaml` preparado (demo por defecto; cuentas con secretos en el panel). Sin probar. Render no tiene región en Sudamérica: el servidor procesaría datos en EE. UU.; revisar con el CESFAM. |
+| Prueba en Safari real de iPhone | ⏳ | Las pruebas automáticas son **emulación en Chromium** con tamaño de iPhone, no Safari real. |
 
 ## Pruebas
 
-- `npm test`: 41 pruebas unitarias y de integración (extractor y casos clínicos pedidos, API, autorización,
+- CI de GitHub: 62 pruebas, incluidas 6 de integración real con PostgreSQL 16 + Better Auth + correo de prueba.
+- `npm test`: pruebas unitarias y de integración (extractor y casos clínicos pedidos, API, autorización,
   exportación, retención, registros, service worker, importación, versionado,
   exportación en formato original, macros, OCR).
-- `npm run test:e2e`: flujo de demostración y flujo de plantillas con Playwright en
-  tamaño iPhone y computador.
+- `npm run test:e2e`: flujos de demostración, plantillas y sesión con Playwright.
+  **Emulación en Chromium** con tamaño de iPhone y computador; no son pruebas en Safari real.
 - Archivos de prueba ficticios en `tests/fixtures` (`npm run fixtures` los regenera).
 - La CI de GitHub ejecuta tipos, pruebas, compilación con Vite y E2E en cada push y PR.

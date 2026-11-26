@@ -28,17 +28,22 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
           <tr>
             <th scope="row">Deepgram (transcripción)</th>
             <td>El audio de la entrevista, en tiempo real, para convertirlo en texto.</td>
-            <td>Pendiente (etapa 3). Hoy no recibe nada.</td>
+            <td>Pendiente. Hoy no recibe nada.</td>
           </tr>
           <tr>
             <th scope="row">Claude de Anthropic (extracción)</th>
             <td>El texto transcrito y los campos de la plantilla, para proponer el llenado.</td>
-            <td>Pendiente (etapa 4). Hoy no recibe nada.</td>
+            <td>Pendiente. Hoy no recibe nada.</td>
           </tr>
           <tr>
-            <th scope="row">Base de datos PostgreSQL</th>
-            <td>Cuentas, plantillas y entrevistas cifradas en reposo.</td>
-            <td>Pendiente (etapa 5).</td>
+            <th scope="row">Supabase (PostgreSQL, São Paulo)</th>
+            <td>Cuentas, plantillas, archivos de plantillas y anamnesis guardadas, asociadas a su propietario.</td>
+            <td>Disponible en modo cuentas (versión de pruebas, datos ficticios).</td>
+          </tr>
+          <tr>
+            <th scope="row">Resend (correo)</th>
+            <td>Tu correo y los enlaces de verificación o restablecimiento de contraseña. Nunca datos clínicos.</td>
+            <td>Disponible en modo cuentas.</td>
           </tr>
         </tbody>
       </table>
@@ -46,7 +51,12 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
       <h2>Compromisos</h2>
       <ul className="plain">
         <li>El audio no se guarda.</li>
-        <li>El navegador no guarda datos clínicos: al cerrar la página, solo quedan en el servidor.</li>
+        <li>El navegador no guarda datos clínicos: se mantienen en memoria solo mientras usas la app.</li>
+        <li>
+          A las 23:59 (hora de Chile) vence la sesión y se limpian los datos temporales del dispositivo si la app está
+          activa, o al volver a abrirla. No se puede garantizar un borrado puntual con la app cerrada. Las anamnesis
+          guardadas permanecen en tu cuenta. Los documentos descargados debes eliminarlos tú.
+        </li>
         <li>El modo sin conexión guarda únicamente la estructura de la aplicación, nunca entrevistas.</li>
         <li>Cada profesional ve solo sus entrevistas; el servidor lo verifica en cada solicitud.</li>
         <li>Los registros técnicos no contienen texto clínico.</li>
