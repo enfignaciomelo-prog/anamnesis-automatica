@@ -1,0 +1,159 @@
+// Tipos compartidos entre servidor e interfaz.
+
+export type FieldId = string;
+
+export interface TemplateField {
+  id: FieldId;
+  label: string;
+  hint?: string;
+  /** Campos críticos (medicamentos, dosis, alergias) siempre requieren revisión. */
+  critical?: boolean;
+  /** Solo lo escribe el profesional; la extracción nunca lo llena. */
+  manualOnly?: boolean;
+  /** Texto usado cuando el paciente niega explícitamente, p. ej. "alergias a medicamentos". */
+  negationLabel?: string;
+}
+
+export interface TemplateSection {
+  id: string;
+  title: string;
+  fields: TemplateField[];
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  version: number;
+  sections: TemplateSection[];
+}
+
+export type SpeakerRole = "profesional" | "paciente" | "acompanante" | "sin_asignar";
+
+export interface Segment {
+  id: string;
+  /** Etiqueta del proveedor de transcripción (diarización). Nunca implica identidad. */
+  speaker: number;
+  text: string;
+  /** Segundos desde el inicio de la escucha. */
+  start: number;
+  end: number;
+}
+
+export type Classification = "actual" | "historico" | "negado" | "familiar";
+
+export type ReviewReason =
+  | "critico"
+  | "dosis"
+  | "contradiccion"
+  | "incertidumbre"
+  | "acompanante"
+  | "hablante_sin_asignar"
+  | "nueva_informacion";
+
+export interface Evidence {
+  segmentId: string;
+  /** Fragmento literal de la transcripción. */
+  quote: string;
+  start: number;
+  /** Pregunta del profesional que da contexto a una respuesta breve. */
+  context?: { segmentId: string; quote: string };
+}
+
+export interface ProposalItem {
+  id: string;
+  fieldId: FieldId;
+  value: string;
+  classification: Classification;
+  evidence: Evidence[];
+  reasons: ReviewReason[];
+  /** El hablante se corrigió dentro del mismo segmento. */
+  corrected?: { discardedQuote: string };
+  /** Clave para detectar contradicciones (p. ej. nombre del medicamento). */
+  key?: string;
+}
+
+export type FieldStatus = "no_referido" | "propuesto" | "requiere_revision" | "confirmado";
+
+export interface FieldState {
+  fieldId: FieldId;
+  status: FieldStatus;
+  /** Texto propuesto a partir de la transcripción (si no hay texto del profesional). */
+  proposedValue: string | null;
+  /** Texto escrito o confirmado por el profesional. Nunca se sobrescribe automáticamente. */
+  professionalValue: string | null;
+  editedByProfessional: boolean;
+  items: ProposalItem[];
+  /** Ítems aparecidos después de la confirmación del profesional. */
+  newItemIds: string[];
+  reasons: ReviewReason[];
+}
+
+export type InterviewStatus = "preparada" | "escuchando" | "pausada" | "detenida" | "finalizada";
+
+export interface Consent {
+  at: string;
+  givenBy: "paciente" | "representante";
+}
+
+export interface InterviewSummary {
+  id: string;
+  createdAt: string;
+  status: InterviewStatus;
+  templateName: string;
+  title: string;
+}
+
+export interface InterviewSnapshot extends InterviewSummary {
+  template: Template;
+  consent: Consent | null;
+  segments: Segment[];
+  speakerRoles: Record<number, SpeakerRole>;
+  fields: Record<FieldId, FieldState>;
+  pauseReason: string | null;
+  finalizedAt: string | null;
+  demo: boolean;
+  expiresAt: string;
+}
+
+export interface InterimEvent {
+  speaker: number;
+  text: string;
+}
+
+export interface SessionInfo {
+  professional: { id: string; name: string };
+  demo: boolean;
+  retentionMinutes: number;
+  retentionOptions: number[];
+}
+
+export const STATUS_LABEL: Record<FieldStatus, string> = {
+  no_referido: "No referido",
+  propuesto: "Propuesto",
+  requiere_revision: "Requiere revisión",
+  confirmado: "Confirmado",
+};
+
+export const REASON_LABEL: Record<ReviewReason, string> = {
+  critico: "Dato crítico: verificar con el paciente",
+  dosis: "Verificar medicamento, dosis y frecuencia",
+  contradiccion: "Hay versiones distintas en la entrevista",
+  incertidumbre: "La respuesta expresa duda",
+  acompanante: "Lo dijo un acompañante, no el paciente",
+  hablante_sin_asignar: "Falta indicar quién habla",
+  nueva_informacion: "Hay información nueva después de tu confirmación",
+};
+
+export const CLASSIFICATION_LABEL: Record<Classification, string> = {
+  actual: "Actual",
+  historico: "Histórico",
+  negado: "Negado",
+  familiar: "Familiar",
+};
+
+export const ROLE_LABEL: Record<SpeakerRole, string> = {
+  profesional: "Profesional",
+  paciente: "Paciente",
+  acompanante: "Acompañante",
+  sin_asignar: "Sin asignar",
+};

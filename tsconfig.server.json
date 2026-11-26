@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "jsx": "preserve"
+  },
+  "include": ["shared", "server", "tests/unit"]
+}

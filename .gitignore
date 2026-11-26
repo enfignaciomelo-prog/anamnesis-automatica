@@ -1,0 +1,36 @@
+# Secretos y configuración local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials*.json
+
+# Audio, grabaciones y datos reales (nunca al repositorio)
+*.wav
+*.mp3
+*.m4a
+*.webm
+*.ogg
+datos-reales/
+exportaciones/
+
+# Dependencias y artefactos
+node_modules/
+dist/
+build/
+.next/
+coverage/
+__pycache__/
+*.pyc
+playwright-report/
+test-results/
+
+# Sistema
+.DS_Store
+.claude/settings.local.json
+
+# Compilados y capturas de pruebas
+build/
+e2e-capturas/

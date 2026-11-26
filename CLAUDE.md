@@ -1,0 +1,142 @@
+# CLAUDE.md — Anamnesis Automática
+
+Instrucciones permanentes para Claude Code en este repositorio.
+
+## Requisito de trabajo: solo desde el teléfono
+
+El responsable trabaja **exclusivamente desde un iPhone**, con Claude Code en la
+nube (app Claude o claude.ai/code en Safari) y GitHub en Safari.
+
+- Nunca indicar pasos que requieran computador, terminal local, PowerShell,
+  instalar programas en el teléfono o editar archivos a mano fuera de GitHub web.
+- Todo comando se ejecuta en el entorno de nube de Claude Code. Si falta una
+  dependencia, instalarla ahí; si la red lo impide, decirlo y proponer una
+  alternativa que no requiera computador.
+- Las revisiones se hacen en la pull request de GitHub (Safari) o en una vista
+  previa desplegada accesible por URL.
+- Al terminar cada tarea, explicar en español cómo verificar el resultado desde
+  el teléfono.
+
+## Producto
+
+PWA para profesionales de salud (computador y teléfono, instalable) que escucha
+una entrevista clínica, la transcribe en español y completa progresivamente un
+borrador de anamnesis según la plantilla seleccionada.
+
+## Reglas clínicas (no negociables)
+
+1. **Respaldo obligatorio:** cada dato propuesto guarda el fragmento literal de la
+   transcripción que lo respalda (texto + marca de tiempo). Sin respaldo, no se
+   propone.
+2. **«No referido»:** todo campo no mencionado queda exactamente como `No referido`.
+3. **Clasificación de cada dato:** `actual`, `histórico`, `negado`
+   (p. ej. «niega dolor torácico»), `familiar` (antecedente de un familiar,
+   nunca atribuido al paciente) y `contradictorio` (se muestran ambas versiones
+   con sus respaldos; no se elige una automáticamente).
+4. El profesional puede editar cualquier campo; las ediciones manuales se marcan
+   como tales.
+5. **Revisión humana obligatoria:** no se finaliza ni exporta sin confirmación
+   explícita del profesional.
+6. La IA nunca diagnostica ni agrega información que no esté en la transcripción.
+
+## Plantillas
+
+- Plantillas predeterminadas incluidas en la app.
+- Plantillas propias en Word, Excel o PDF: la app propone los campos detectados y
+  el profesional confirma o corrige la correspondencia antes de usarlas.
+- Leer `.claude/skills/docx`, `xlsx` o `pdf` antes de tocar esos formatos.
+
+## Privacidad y seguridad
+
+- Consentimiento explícito del paciente antes de escuchar; registrar fecha, hora
+  y profesional. Controles visibles de iniciar, pausar y detener; indicador
+  permanente mientras se escucha.
+- Acceso individual por profesional; datos separados entre profesionales
+  (aislamiento por usuario en servidor, no solo en la interfaz).
+- Cifrado en tránsito y en reposo; mínima retención del audio (por defecto, no
+  conservarlo tras transcribir).
+- Marco de referencia en Chile: Ley 20.584 (derechos del paciente y ficha
+  clínica), Ley 19.628 y Ley 21.719 (protección de datos personales). Validar con
+  el área legal del establecimiento antes de usar datos reales.
+- **Prohibido en el repositorio:** claves API, archivos `.env`, credenciales,
+  grabaciones y cualquier dato real de pacientes. Usar solo datos ficticios.
+- La clave de la API de Claude vive solo en el servidor (variables de entorno del
+  proveedor de despliegue), nunca en el navegador.
+
+## Modo demostración
+
+- Funciona sin claves API: transcripciones ficticias pregrabadas y un extractor
+  simulado que devuelve resultados deterministas con respaldos.
+- Es el modo por defecto hasta que el responsable apruebe la integración real.
+- Los datos ficticios deben verse claramente ficticios (nombres y RUT inventados
+  y marcados como «DEMO»).
+
+## Decisiones técnicas tomadas
+
+- **Pila:** React + TypeScript + Vite (interfaz), Node.js + TypeScript con
+  `node:http` sin framework (servidor), PostgreSQL (etapa 5), API de Claude
+  (etapa 4), Deepgram (etapa 3).
+- **Un solo proceso:** el servidor sirve la API y `dist/` (interfaz compilada).
+- **Tiempo real:** Server-Sent Events (servidor → interfaz, reconexión
+  automática, estado completo al reconectar) + POST para comandos. El audio
+  irá por HTTP al servidor y del servidor a Deepgram por WebSocket nativo de
+  Node 22. Ninguna clave llega al navegador.
+- **Deepgram:** Nova-3 tiene modelo de español (`es`, `es-419`) para streaming
+  según su documentación oficial (changelog de agosto 2026). Verificar de nuevo
+  al implementar la etapa 3.
+- **Persistencia detrás de la interfaz `Store`** (`server/store.ts`): hoy en
+  memoria; PostgreSQL debe implementar la misma interfaz con el dueño en cada consulta.
+- **Extractor intercambiable:** `server/extraction/demoExtractor.ts` (reglas,
+  simulado) se reemplazará por Claude con salida estructurada que incluya el
+  fragmento de respaldo; `merge.ts` se mantiene.
+- **Despliegue de demostración:** Render (`render.yaml`), configurable desde
+  Safari. Alternativa: `Dockerfile`.
+- **Estado real/simulado/pendiente:** mantener `docs/ESTADO.md` al día en cada PR.
+
+## Entorno de nube de Claude Code
+
+- Si el registro npm no está disponible, ejecutar `scripts/link-offline-deps.sh`
+  y compilar con `npm run build:web:offline` (esbuild). La CI de GitHub usa
+  `npm install` y Vite.
+- Pruebas: `npm test` (node:test) y `npm run test:e2e` (skill webapp-testing).
+  El comando del servidor usa `exec` para que no queden procesos ocupando el puerto.
+
+## Decisiones pendientes (no decidir sin consultar)
+
+- Sistema de autenticación de cuentas reales (etapa 5).
+- Proveedor de PostgreSQL y región de alojamiento de datos.
+
+## Skills del proyecto (`.claude/skills/`)
+
+Origen y commit en `.claude/skills/ORIGEN.md`. Leer el `SKILL.md` pertinente
+**antes** de cada tarea:
+
+| Tarea | Skill |
+|---|---|
+| Interfaz y diseño visual | `frontend-design` |
+| Pruebas de la app (Playwright) | `webapp-testing` |
+| Plantillas/exportación Word | `docx` |
+| Plantillas Excel | `xlsx` |
+| Plantillas/exportación PDF | `pdf` |
+| Integración con la API de Claude | `claude-api` |
+
+No agregar plugins ni skills de terceros sin justificar su utilidad en la PR.
+
+## Desarrollo por etapas
+
+0. Preparación del repositorio y skills. ✅
+1. Demostración funcional. ✅ (ver `docs/ESTADO.md`)
+2. Plantillas propias: edición, versionado, importación DOCX/XLSX, luego PDF
+   con texto y OCR con revisión manual; mapeo hoja/celda y marcadores Word.
+3. Micrófono y transcripción real con Deepgram.
+4. Llenado con Claude (salida estructurada con respaldo literal).
+5. Cuentas, seguridad y persistencia en PostgreSQL.
+6. Despliegue y pruebas (incluye prueba real en Safari de iPhone).
+
+Cada etapa: rama propia, pruebas con `webapp-testing`, pull request en español
+con instrucciones de verificación desde el teléfono.
+
+## Convenciones
+
+- Interfaz, textos y documentación en español (Chile).
+- Commits pequeños; nunca trabajar directo en `main`.

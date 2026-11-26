@@ -1,0 +1,39 @@
+{
+  "name": "anamnesis-automatica",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PWA de anamnesis asistida para profesionales de salud (etapa 1: demostración con datos ficticios)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "dev:server": "tsx watch server/index.ts",
+    "build": "vite build && npm run build:server",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=build/server.js",
+    "build:web:offline": "node scripts/build-web-offline.mjs",
+    "start": "node build/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
+    "test": "node --import tsx --test tests/unit/*.test.ts",
+    "test:e2e": "python3 .claude/skills/webapp-testing/scripts/with_server.py --server \"exec env DEMO_SPEED=20 PORT=4173 node --import tsx server/index.ts\" --port 4173 -- python3 tests/e2e/demo_flow.py"
+  },
+  "dependencies": {
+    "docx": "9.8.1",
+    "pdf-lib": "1.17.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.3",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "esbuild": "0.28.2",
+    "jszip": "3.10.1",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3",
+    "vite": "8.3.8"
+  }
+}
