@@ -387,6 +387,27 @@ describe("escucha ligada a la sesión que la inició (dos dispositivos, misma cu
     assert.equal(s.pauseReason, "manual");
   });
 
+  it("corte sin pantalla: el servidor pausa la escucha y revoca la sesión aunque no haya ningún canal abierto", async () => {
+    const pc = await device();
+    const { body } = await pc.json<InterviewSnapshot>("POST", "/api/interviews", {});
+    await pc.json("POST", `/api/interviews/${body.id}/consent`, { givenBy: "paciente" });
+    const started = await pc.json<InterviewSnapshot>("POST", `/api/interviews/${body.id}/command`, { command: "iniciar" });
+    assert.equal(started.body.status, "escuchando");
+    const { body: info } = await pc.json<SessionInfo>("GET", "/api/session");
+    // Sin canal abierto y sin más peticiones del PC: el reloj del servidor pasa las 23:59.
+    clock = Date.parse(info.cutoffAt) - Date.now() + 500;
+    let snap: InterviewSnapshot | undefined;
+    for (let i = 0; i < 25; i++) {
+      snap = await slow.service.read("demo-a", body.id); // lectura interna, no es una petición del PC
+      if (snap.status !== "escuchando") break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    assert.equal(snap!.status, "pausada", "la escucha debe pausarse en el corte");
+    assert.equal(snap!.pauseReason, "corte_diario");
+    assert.equal(await slow.gate.isActive(pc.sid), false, "la sesión que escuchaba queda revocada");
+    assert.equal((await pc.json("GET", "/api/session")).body.error, "sin_sesion");
+  });
+
   it("la sesión que escucha no se bloquea por inactividad", async () => {
     const { pc, id, pcStream, phoneStream } = await setup();
     phoneStream.close();
