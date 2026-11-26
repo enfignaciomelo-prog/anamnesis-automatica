@@ -11,6 +11,8 @@ export interface ProfessionalFieldState {
   edited: boolean;
   /** Ítems que el profesional ya tuvo a la vista al confirmar. */
   ackItemIds: string[];
+  /** Texto en edición autoguardado (aún no confirmado). */
+  draft?: string | null;
 }
 
 export function computeFields(
@@ -47,6 +49,7 @@ export function computeFields(
       proposedValue,
       professionalValue: p?.confirmed ? p.value : null,
       editedByProfessional: Boolean(p?.edited),
+      draftValue: p?.draft ?? null,
       items: its,
       newItemIds,
       reasons: p?.confirmed && !newItemIds.length ? [] : reasons,

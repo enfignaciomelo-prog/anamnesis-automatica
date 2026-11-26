@@ -142,6 +142,8 @@ export interface FieldState {
   /** Texto escrito o confirmado por el profesional. Nunca se sobrescribe automáticamente. */
   professionalValue: string | null;
   editedByProfessional: boolean;
+  /** Texto en edición autoguardado en el servidor, aún no confirmado. */
+  draftValue: string | null;
   items: ProposalItem[];
   /** Ítems aparecidos después de la confirmación del profesional. */
   newItemIds: string[];
@@ -158,6 +160,8 @@ export interface Consent {
 export interface InterviewSummary {
   id: string;
   createdAt: string;
+  /** Última modificación guardada. */
+  updatedAt: string;
   status: InterviewStatus;
   templateName: string;
   title: string;
@@ -181,10 +185,19 @@ export interface InterimEvent {
 }
 
 export interface SessionInfo {
-  professional: { id: string; name: string };
+  professional: { id: string; name: string; email?: string };
   demo: boolean;
+  /** "demo" (perfiles ficticios) o "cuentas" (correo y contraseña). */
+  authMode: "demo" | "cuentas";
   retentionMinutes: number;
   retentionOptions: number[];
+  idleMinutes: number;
+  idleOptions: number[];
+  /** Corte diario (23:59 America/Santiago) de esta sesión. Lo exige el servidor. */
+  cutoffAt: string;
+  /** Vencimiento efectivo: el menor entre el corte y el bloqueo por inactividad. */
+  expiresAt: string;
+  serverTime: string;
 }
 
 export const STATUS_LABEL: Record<FieldStatus, string> = {

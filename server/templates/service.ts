@@ -133,13 +133,13 @@ export class TemplateService {
     return { id: t.id, name: t.name, version: v.version, sections: structuredClone(v.sections), source: t.source };
   }
 
-  private own(ownerId: string, id: string) {
-    const t = this.store.getTemplate(ownerId, id);
+  private async own(ownerId: string, id: string) {
+    const t = await this.store.getTemplate(ownerId, id);
     if (!t) throw new HttpError(404, "plantilla_no_encontrada", "La plantilla no existe o fue eliminada.");
     return t;
   }
 
-  list(ownerId: string): TemplateSummary[] {
+  async list(ownerId: string): Promise<TemplateSummary[]> {
     const g = this.generic();
     return [
       {
@@ -151,7 +151,7 @@ export class TemplateService {
         updatedAt: g.versions[0].createdAt,
         fieldCount: allFields(g).length,
       },
-      ...this.store.listTemplates(ownerId).map((t) => {
+      ...(await this.store.listTemplates(ownerId)).map((t) => {
         const last = t.versions[t.versions.length - 1];
         return {
           id: t.id,
@@ -166,9 +166,9 @@ export class TemplateService {
     ];
   }
 
-  detail(ownerId: string, id: string, version?: number): TemplateDetail {
+  async detail(ownerId: string, id: string, version?: number): Promise<TemplateDetail> {
     if (id === GENERIC_TEMPLATE.id) return this.generic();
-    const t = this.own(ownerId, id);
+    const t = await this.own(ownerId, id);
     return {
       ...this.toTemplate(t, version),
       builtIn: false,
@@ -177,16 +177,16 @@ export class TemplateService {
   }
 
   /** Plantilla (última versión) para iniciar una entrevista. */
-  resolve(ownerId: string, id: string | undefined): Template {
+  async resolve(ownerId: string, id: string | undefined): Promise<Template> {
     if (!id || id === GENERIC_TEMPLATE.id) return structuredClone(GENERIC_TEMPLATE);
-    return this.toTemplate(this.own(ownerId, id));
+    return this.toTemplate(await this.own(ownerId, id));
   }
 
-  create(ownerId: string, body: unknown, fromId?: string): TemplateDetail {
+  async create(ownerId: string, body: unknown, fromId?: string): Promise<TemplateDetail> {
     let input: TemplateInput;
     let source: TemplateRecord["source"];
     if (fromId) {
-      const base = this.detail(ownerId, fromId);
+      const base = await this.detail(ownerId, fromId);
       input = { name: `${base.name} (copia)`.slice(0, 80), sections: base.sections };
       // La copia conserva el archivo original para exportar en su formato.
       source = base.source;
@@ -201,7 +201,7 @@ export class TemplateService {
       source,
       versions: [{ version: 1, createdAt: now, note: fromId ? "Copia" : "Creada", sections: normalizeSections(input.sections) }],
     };
-    this.store.saveTemplate(rec);
+    await this.store.saveTemplate(rec);
     logEvent("template_created");
     return this.detail(ownerId, rec.id);
   }
@@ -210,7 +210,7 @@ export class TemplateService {
   async update(ownerId: string, id: string, body: unknown): Promise<TemplateDetail> {
     if (id === GENERIC_TEMPLATE.id)
       throw new HttpError(403, "predeterminada", "La plantilla predeterminada no se edita. Duplícala para modificarla.");
-    const t = this.own(ownerId, id);
+    const t = await this.own(ownerId, id);
     const raw = body as { baseVersion?: unknown };
     const input = parse(templateInputSchema, body);
     const last = t.versions[t.versions.length - 1];
@@ -222,18 +222,16 @@ export class TemplateService {
     t.versions.push({ version: last.version + 1, createdAt: Date.now(), note: input.note ?? "Editada", sections });
     t.name = stripControl(input.name);
     t.updatedAt = Date.now();
-    this.store.saveTemplate(t);
+    await this.store.saveTemplate(t);
     logEvent("template_versioned");
     return this.detail(ownerId, id);
   }
 
-  delete(ownerId: string, id: string, fileInUse: (fileId: string) => boolean) {
-    const t = this.own(ownerId, id);
-    this.store.deleteTemplate(ownerId, id);
+  async delete(ownerId: string, id: string) {
+    const t = await this.own(ownerId, id);
+    await this.store.deleteTemplate(ownerId, id);
     const fileId = t.source?.fileId;
-    const stillUsed =
-      fileId && (fileInUse(fileId) || this.store.listTemplates(ownerId).some((x) => x.source?.fileId === fileId));
-    if (fileId && !stillUsed) this.store.deleteFile(ownerId, fileId);
+    if (fileId && !(await this.store.fileInUse(ownerId, fileId))) await this.store.deleteFile(ownerId, fileId);
     logEvent("template_deleted");
   }
 
@@ -252,7 +250,7 @@ export class TemplateService {
       res = kind === "docx" ? await analyzeDocx(zip) : await analyzeXlsx(zip);
     }
     for (const c of res.candidates) if (c.target && c.target.kind !== "cell") validTargets.add(targetKey(c.target));
-    const file = this.store.putFile({ ownerId, kind, fileName: safeName, bytes });
+    const file = await this.store.putFile({ ownerId, kind, fileName: safeName, bytes });
     const analysis: ImportAnalysis = {
       importId: `imp_${randomUUID()}`,
       fileName: safeName,
@@ -266,18 +264,18 @@ export class TemplateService {
       ],
       ocr: Boolean(res.ocr),
     };
-    this.store.putImport({ ownerId, fileId: file.id, analysis, validTargets }, IMPORT_TTL_MS);
+    await this.store.putImport({ ownerId, fileId: file.id, analysis, validTargets }, IMPORT_TTL_MS);
     logEvent("template_import_analyzed", { kind, candidates: res.candidates.length });
     return analysis;
   }
 
   /** Crea la plantilla a partir de lo que el profesional confirmó o corrigió. */
   async confirmImport(ownerId: string, importId: string, body: unknown): Promise<TemplateDetail> {
-    const imp = this.store.getImport(ownerId, importId);
+    const imp = await this.store.getImport(ownerId, importId);
     if (!imp) throw new HttpError(404, "importacion_vencida", "La importación venció. Vuelve a subir el archivo.");
     const input = parse(templateInputSchema, body);
     const sections = normalizeSections(input.sections);
-    const file = this.store.getFile(ownerId, imp.fileId)!;
+    const file = (await this.store.getFile(ownerId, imp.fileId))!;
     const source = { kind: file.kind, fileName: file.fileName, fileId: file.id, ocr: imp.analysis.ocr || undefined };
     for (const f of sections.flatMap((s) => s.fields)) {
       const t = f.target;
@@ -295,8 +293,8 @@ export class TemplateService {
       source,
       versions: [{ version: 1, createdAt: now, note: `Importada de ${file.fileName}`, sections }],
     };
-    this.store.saveTemplate(rec);
-    this.store.deleteImport(ownerId, importId);
+    await this.store.saveTemplate(rec);
+    await this.store.deleteImport(ownerId, importId);
     logEvent("template_imported", { kind: file.kind });
     return this.detail(ownerId, rec.id);
   }
@@ -306,7 +304,7 @@ export class TemplateService {
     const fields = sections.flatMap((s) => s.fields).filter((f) => f.target);
     if (!fields.length) return;
     if (!source) throw new HttpError(400, "sin_archivo", "Solo las plantillas importadas pueden tener destinos en un archivo.");
-    const file = this.store.getFile(ownerId, source.fileId);
+    const file = await this.store.getFile(ownerId, source.fileId);
     if (!file) throw new HttpError(410, "archivo_no_disponible", "El archivo original ya no está disponible.");
     if (file.kind === "pdf") throw new HttpError(400, "pdf_sin_destino", "Los PDF no admiten destinos: se exportan con el formato estándar.");
     const zip = await JSZip.loadAsync(file.bytes);
@@ -331,7 +329,7 @@ export class TemplateService {
     const src = snap.template.source;
     if (!src || src.kind === "pdf")
       throw new HttpError(400, "sin_original", "Esta plantilla no tiene un archivo Word o Excel para llenar.");
-    const file = this.store.getFile(ownerId, src.fileId);
+    const file = await this.store.getFile(ownerId, src.fileId);
     if (!file) throw new HttpError(410, "archivo_no_disponible", "El archivo original ya no está disponible.");
     const zip = await JSZip.loadAsync(file.bytes);
     const prefix = snap.demo ? "[DEMO] " : "";

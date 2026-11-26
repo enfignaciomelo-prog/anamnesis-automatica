@@ -140,7 +140,7 @@ describe("API", () => {
     // El texto del profesional no se sobrescribe cuando aparece información nueva.
     const mine = "Polidipsia y poliuria de 3 semanas (texto del profesional)";
     await c.json("POST", `/api/interviews/${id}/fields/enfermedad_actual/confirm`, { value: mine });
-    const rec = app.service.record("demo-a", id);
+    const rec = await app.service.record("demo-a", id);
     rec.segments.push({ id: "s99", speaker: 2, text: "También tengo mareos en la mañana.", start: 99, end: 100 });
     s = (await c.json("GET", `/api/interviews/${id}`)).body;
     assert.equal(s.fields.enfermedad_actual.professionalValue, mine);
@@ -220,8 +220,10 @@ describe("API", () => {
     const c = await login("demo-b");
     await c.json("PATCH", "/api/settings", { retentionMinutes: 15 });
     const { body } = await c.json("POST", "/api/interviews", {});
-    app.service.record("demo-b", body.id).lastActivity = Date.now() - 16 * 60_000;
-    app.service.sweep();
+    const old = await app.service.record("demo-b", body.id);
+    old.lastActivity = Date.now() - 16 * 60_000;
+    await app.store.saveInterview(old);
+    await app.service.sweep();
     assert.equal((await c.req("GET", `/api/interviews/${body.id}`)).status, 404);
     const bad = await c.json("PATCH", "/api/settings", { retentionMinutes: 99999 });
     assert.equal(bad.status, 400);

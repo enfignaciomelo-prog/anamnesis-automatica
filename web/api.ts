@@ -57,7 +57,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const api = {
   session: () => call<SessionInfo>("GET", "/api/session"),
-  demoLogin: (perfil: "demo-a" | "demo-b") => call<SessionInfo>("POST", "/api/demo/session", { perfil }),
+  demoLogin: (perfil: "demo-a" | "demo-b") =>
+    call<{ ok: true }>("POST", "/api/demo/session", { perfil }).then(() => call<SessionInfo>("GET", "/api/session")),
   logout: () => call<{ ok: true }>("POST", "/api/logout", {}),
   setRetention: (retentionMinutes: number) => call<SessionInfo>("PATCH", "/api/settings", { retentionMinutes }),
   list: () => call<InterviewSummary[]>("GET", "/api/interviews"),

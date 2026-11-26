@@ -1,11 +1,21 @@
-/** Configuración desde variables de entorno. Las claves nunca salen del servidor. */
+/**
+ * Configuración desde variables de entorno. Las claves nunca salen del
+ * servidor ni se imprimen en los registros.
+ *
+ * Modos:
+ * - DEMO_MODE=true (predeterminado): perfiles ficticios, datos en memoria.
+ * - DEMO_MODE=false: cuentas con Better Auth, PostgreSQL y correo real.
+ */
 export interface Config {
   port: number;
   demo: boolean;
+  production: boolean;
   /** Multiplicador de velocidad de la entrevista ficticia (pruebas usan valores altos). */
   demoSpeed: number;
   retentionDefaultMinutes: number;
   retentionOptions: number[];
+  idleDefaultMinutes: number;
+  idleOptions: number[];
   /** Detrás de un proxy HTTPS (Render, Fly, etc.): confiar en X-Forwarded-Proto. */
   trustProxy: boolean;
   staticDir: string;
@@ -14,7 +24,12 @@ export interface Config {
   /** OCR de PDF escaneados (requiere tesseract y pdftoppm en el servidor). */
   ocr: boolean;
   providers: { anthropic: boolean; deepgram: boolean; database: boolean };
+  database?: { url: string; ssl: "disable" | "require"; caCert?: string };
+  auth?: { secret: string; baseUrl: string };
+  email?: { transport: "resend" | "prueba"; resendKey?: string; from?: string };
 }
+
+const DAY = 24 * 60;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const providers = {
@@ -23,22 +38,48 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     database: Boolean(env.DATABASE_URL),
   };
   const demo = env.DEMO_MODE !== "false";
-  if (!demo) {
-    // Cuentas reales, PostgreSQL y proveedores llegan en etapas 3–5.
-    throw new Error(
-      "DEMO_MODE=false aún no está disponible: cuentas, persistencia y proveedores reales están pendientes (etapas 3 a 5).",
-    );
-  }
-  return {
+  const production = env.NODE_ENV === "production";
+  const base: Config = {
     port: Number(env.PORT ?? 3000),
     demo,
+    production,
     demoSpeed: Math.min(Math.max(Number(env.DEMO_SPEED ?? 1), 0.25), 100),
-    retentionDefaultMinutes: 60,
-    retentionOptions: [15, 60, 240, 720],
+    retentionDefaultMinutes: demo ? 60 : 30 * DAY,
+    retentionOptions: demo ? [15, 60, 240, 720] : [7 * DAY, 30 * DAY, 90 * DAY, 365 * DAY],
+    idleDefaultMinutes: demo ? 60 : 15,
+    idleOptions: [5, 15, 30, 60],
     trustProxy: env.TRUST_PROXY === "true",
     staticDir: env.STATIC_DIR ?? "dist",
     disconnectPauseMs: Number(env.DISCONNECT_PAUSE_MS ?? 8000),
     ocr: env.OCR !== "false",
     providers,
+  };
+  if (demo) return base;
+
+  const missing = ["DATABASE_URL", "BETTER_AUTH_SECRET", "BETTER_AUTH_URL"].filter((k) => !env[k]);
+  if (missing.length) throw new Error(`Faltan variables de entorno para el modo con cuentas: ${missing.join(", ")}.`);
+  if ((env.BETTER_AUTH_SECRET ?? "").length < 32)
+    throw new Error("BETTER_AUTH_SECRET debe tener al menos 32 caracteres aleatorios.");
+  const baseUrl = env.BETTER_AUTH_URL!.replace(/\/+$/, "");
+  if (production && !baseUrl.startsWith("https://")) throw new Error("En producción BETTER_AUTH_URL debe usar https://.");
+
+  const transport = env.EMAIL_TRANSPORT === "prueba" ? "prueba" : "resend";
+  if (transport === "prueba" && production)
+    throw new Error(
+      "EMAIL_TRANSPORT=prueba no se permite en producción: la verificación de correo debe enviarse de verdad. Configura RESEND_API_KEY y EMAIL_FROM.",
+    );
+  if (transport === "resend" && (!env.RESEND_API_KEY || !env.EMAIL_FROM))
+    throw new Error("Faltan RESEND_API_KEY y EMAIL_FROM (o usa EMAIL_TRANSPORT=prueba fuera de producción).");
+
+  const local = /@(localhost|127\.0\.0\.1)(:\d+)?\//.test(env.DATABASE_URL!);
+  return {
+    ...base,
+    database: {
+      url: env.DATABASE_URL!,
+      ssl: env.DATABASE_SSL === "disable" || (local && env.DATABASE_SSL !== "require") ? "disable" : "require",
+      caCert: env.DATABASE_CA_CERT || undefined,
+    },
+    auth: { secret: env.BETTER_AUTH_SECRET!, baseUrl },
+    email: { transport, resendKey: env.RESEND_API_KEY, from: env.EMAIL_FROM },
   };
 }

@@ -11,7 +11,20 @@ permissions:
 jobs:
   verificar:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aa
+          POSTGRES_PASSWORD: aa_prueba
+          POSTGRES_DB: aa_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U aa" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # Base de datos de prueba efímera de la CI; datos ficticios.
+      TEST_DATABASE_URL: postgres://aa:aa_prueba@localhost:5432/aa_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,7 +37,7 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Tipos (interfaz y servidor)
         run: npm run typecheck
-      - name: Pruebas unitarias y de integración
+      - name: Pruebas unitarias y de integración (incluye PostgreSQL + Better Auth reales)
         run: npm test
       - name: Compilar con Vite y servidor
         run: npm run build
