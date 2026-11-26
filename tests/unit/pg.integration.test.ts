@@ -15,7 +15,7 @@ import type { App } from "../../server/app";
 import type { Config } from "../../server/config";
 
 const DB = process.env.TEST_DATABASE_URL;
-const PORT = 4190;
+const PORT = 4271; // evitar puertos bloqueados por Fetch (p. ej., 4190)
 const BASE = `http://127.0.0.1:${PORT}`;
 const skip = DB ? false : "TEST_DATABASE_URL no definido: se omite la integración con PostgreSQL (se ejecuta en la CI)";
 
