@@ -49,7 +49,20 @@ export function createBetterAuth(pool: pg.Pool, config: Config, mailer: Mailer) 
       expiresIn: 60 * 60 * 24,
       updateAge: 60 * 60,
     },
-    rateLimit: { enabled: true, window: 60, max: config.production ? 30 : 300 },
+    // Producción: límites estrictos de Better Auth para ingreso y registro.
+    // Fuera de producción (pruebas automáticas) se amplían para no bloquear la CI.
+    rateLimit: config.production
+      ? { enabled: true, window: 60, max: 30 }
+      : {
+          enabled: true,
+          window: 60,
+          max: 1000,
+          customRules: {
+            "/sign-in/email": { window: 10, max: 100 },
+            "/sign-up/email": { window: 10, max: 100 },
+            "/request-password-reset": { window: 10, max: 100 },
+          },
+        },
     advanced: {
       useSecureCookies: secure,
       cookiePrefix: COOKIE_PREFIX,
