@@ -71,14 +71,40 @@ borrador de anamnesis según la plantilla seleccionada.
 - Los datos ficticios deben verse claramente ficticios (nombres y RUT inventados
   y marcados como «DEMO»).
 
+## Decisiones técnicas tomadas
+
+- **Pila:** React + TypeScript + Vite (interfaz), Node.js + TypeScript con
+  `node:http` sin framework (servidor), PostgreSQL (etapa 5), API de Claude
+  (etapa 4), Deepgram (etapa 3).
+- **Un solo proceso:** el servidor sirve la API y `dist/` (interfaz compilada).
+- **Tiempo real:** Server-Sent Events (servidor → interfaz, reconexión
+  automática, estado completo al reconectar) + POST para comandos. El audio
+  irá por HTTP al servidor y del servidor a Deepgram por WebSocket nativo de
+  Node 22. Ninguna clave llega al navegador.
+- **Deepgram:** Nova-3 tiene modelo de español (`es`, `es-419`) para streaming
+  según su documentación oficial (changelog de agosto 2026). Verificar de nuevo
+  al implementar la etapa 3.
+- **Persistencia detrás de la interfaz `Store`** (`server/store.ts`): hoy en
+  memoria; PostgreSQL debe implementar la misma interfaz con el dueño en cada consulta.
+- **Extractor intercambiable:** `server/extraction/demoExtractor.ts` (reglas,
+  simulado) se reemplazará por Claude con salida estructurada que incluya el
+  fragmento de respaldo; `merge.ts` se mantiene.
+- **Despliegue de demostración:** Render (`render.yaml`), configurable desde
+  Safari. Alternativa: `Dockerfile`.
+- **Estado real/simulado/pendiente:** mantener `docs/ESTADO.md` al día en cada PR.
+
+## Entorno de nube de Claude Code
+
+- Si el registro npm no está disponible, ejecutar `scripts/link-offline-deps.sh`
+  y compilar con `npm run build:web:offline` (esbuild). La CI de GitHub usa
+  `npm install` y Vite.
+- Pruebas: `npm test` (node:test) y `npm run test:e2e` (skill webapp-testing).
+  El comando del servidor usa `exec` para que no queden procesos ocupando el puerto.
+
 ## Decisiones pendientes (no decidir sin consultar)
 
-- **Transcripción de voz:** la API de Claude no convierte audio a texto. Elegir
-  entre reconocimiento del navegador (Web Speech API; soporte y privacidad
-  variables en Safari/iOS) o un servicio de transcripción dedicado.
-- Plataforma de despliegue y almacenamiento (debe permitir vista previa por URL
-  para revisar desde el teléfono).
-- Sistema de autenticación.
+- Sistema de autenticación de cuentas reales (etapa 5).
+- Proveedor de PostgreSQL y región de alojamiento de datos.
 
 ## Skills del proyecto (`.claude/skills/`)
 
@@ -98,14 +124,14 @@ No agregar plugins ni skills de terceros sin justificar su utilidad en la PR.
 
 ## Desarrollo por etapas
 
-0. Preparación del repositorio y skills (esta etapa).
-1. Esqueleto PWA + modo demostración con transcripción ficticia.
-2. Motor de extracción simulado: respaldo, «No referido», clasificaciones.
-3. Editor del borrador, revisión y confirmación; exportación docx/pdf.
-4. Plantillas propias (Word, Excel, PDF) con confirmación de campos.
-5. Consentimiento, captura de audio y transcripción real.
-6. Autenticación, separación por profesional y protección de datos.
-7. Integración real con la API de Claude (solo servidor).
+0. Preparación del repositorio y skills. ✅
+1. Demostración funcional. ✅ (ver `docs/ESTADO.md`)
+2. Plantillas propias: edición, versionado, importación DOCX/XLSX, luego PDF
+   con texto y OCR con revisión manual; mapeo hoja/celda y marcadores Word.
+3. Micrófono y transcripción real con Deepgram.
+4. Llenado con Claude (salida estructurada con respaldo literal).
+5. Cuentas, seguridad y persistencia en PostgreSQL.
+6. Despliegue y pruebas (incluye prueba real en Safari de iPhone).
 
 Cada etapa: rama propia, pruebas con `webapp-testing`, pull request en español
 con instrucciones de verificación desde el teléfono.

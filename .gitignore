@@ -30,3 +30,7 @@ test-results/
 # Sistema
 .DS_Store
 .claude/settings.local.json
+
+# Compilados y capturas de pruebas
+build/
+e2e-capturas/

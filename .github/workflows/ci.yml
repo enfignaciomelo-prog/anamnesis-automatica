@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "etapa-*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: npm install --no-audit --no-fund
+      - name: Tipos (interfaz y servidor)
+        run: npm run typecheck
+      - name: Pruebas unitarias y de integración
+        run: npm test
+      - name: Compilar con Vite y servidor
+        run: npm run build
+      - name: Instalar Playwright
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Prueba de extremo a extremo
+        run: npm run test:e2e
+        env:
+          SHOTS_DIR: e2e-capturas
+      - name: Guardar capturas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capturas-e2e
+          path: e2e-capturas
+          if-no-files-found: ignore

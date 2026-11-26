@@ -1,0 +1,22 @@
+# Despliegue HTTPS de demostración en Render (se configura desde Safari:
+# dashboard.render.com → New → Blueprint → elegir este repositorio).
+# NO PROBADO todavía. Modo demostración: sin claves y con datos ficticios.
+services:
+  - type: web
+    name: anamnesis-automatica-demo
+    runtime: node
+    plan: free
+    # Una sola instancia: el almacenamiento de la demo está en memoria.
+    numInstances: 1
+    buildCommand: npm install --include=dev --no-audit --no-fund && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DEMO_MODE
+        value: "true"
+      - key: TRUST_PROXY
+        value: "true"
+      - key: STATIC_DIR
+        value: dist

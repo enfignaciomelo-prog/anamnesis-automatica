@@ -1,0 +1,766 @@
+/* Anamnesis Automática — inspirado en la ficha clínica: papel frío, tinta azul,
+   un color por estado. La voz del paciente va en serif; la interfaz, en la
+   tipografía del sistema (San Francisco en iPhone). */
+:root {
+  --paper: #f3f6f5;
+  --surface: #ffffff;
+  --ink: #16263a;
+  --slate: #5b6b7a;
+  --line: #d5dedb;
+  --listen: #c2362b;
+  --prop: #2457a6;
+  --rev: #9a6100;
+  --ok: #22764a;
+  --none: #7a8590;
+  --prop-wash: rgba(36, 87, 166, 0.16);
+  --rev-wash: rgba(168, 106, 0, 0.12);
+  --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --voice: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --r-small: 6px;
+  --r-btn: 10px;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 16px/1.5 var(--ui);
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+  margin: 0;
+}
+h1 {
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+h2 {
+  font-size: 1.1rem;
+  font-weight: 650;
+  margin: 1.5rem 0 0.5rem;
+}
+h3 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+main,
+.interview {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 32px
+    max(16px, env(safe-area-inset-left));
+}
+.center {
+  min-height: 60vh;
+  display: grid;
+  place-items: center;
+}
+.muted {
+  color: var(--slate);
+}
+.small {
+  font-size: 0.875rem;
+}
+.lede {
+  font-size: 1.05rem;
+  max-width: 60ch;
+  color: var(--slate);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.plain {
+  padding-left: 1.1rem;
+}
+.plain li {
+  margin: 0.25rem 0;
+}
+
+/* Botones: 44 px mínimos para el pulgar */
+.btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  padding: 0 1rem;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--r-btn);
+  background: var(--surface);
+  color: var(--ink);
+  font: 600 1rem var(--ui);
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn.primary {
+  background: var(--ink);
+  color: #fff;
+}
+.btn.danger {
+  border-color: var(--listen);
+  color: var(--listen);
+}
+.btn.quiet {
+  border-color: var(--line);
+  color: var(--slate);
+}
+.btn.small {
+  min-height: 40px;
+  font-size: 0.9rem;
+  padding: 0 0.8rem;
+}
+.btn.big {
+  flex: 1;
+  min-height: 54px;
+  font-size: 1.05rem;
+}
+.btn.wide {
+  width: 100%;
+  margin: 1rem 0;
+}
+.btn:disabled,
+.btn.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn:focus-visible,
+.link:focus-visible,
+.tab:focus-visible,
+.evidence:focus-visible,
+.row-btn:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid var(--prop);
+  outline-offset: 2px;
+}
+.link {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0.5rem 0;
+  color: var(--prop);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  min-height: 44px;
+}
+.stack {
+  display: grid;
+  gap: 0.75rem;
+}
+
+select,
+textarea {
+  font: 16px/1.4 var(--ui); /* 16 px evita el zoom automático de Safari */
+  color: var(--ink);
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-small);
+  padding: 0.6rem;
+  width: 100%;
+}
+select {
+  min-height: 44px;
+}
+
+.panel {
+  margin: 1.25rem 0;
+}
+.error {
+  color: var(--listen);
+  font-weight: 600;
+}
+.empty {
+  color: var(--slate);
+  padding: 1.5rem 0;
+}
+.demo-notice {
+  margin: 0.75rem 0;
+  padding: 0.55rem 0.75rem;
+  border-left: 4px solid var(--rev);
+  background: var(--rev-wash);
+  font-size: 0.9rem;
+}
+.banner {
+  margin: 0.75rem 0;
+  padding: 0.7rem 0.8rem;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-small);
+}
+.banner.warn {
+  border-color: var(--rev);
+}
+.ok {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+/* Inicio */
+.welcome-head {
+  margin: 1.5rem 0 0.5rem;
+}
+.welcome-head h1 {
+  font-size: 2.1rem;
+  max-width: 14ch;
+}
+.home-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.interview-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-top: 1px solid var(--line);
+}
+.interview-list li {
+  border-bottom: 1px solid var(--line);
+}
+.row-btn {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 56px;
+  background: none;
+  border: 0;
+  padding: 0.5rem 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pill {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.pill.st-escuchando {
+  border-color: var(--listen);
+  color: var(--listen);
+}
+.pill.st-finalizada {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+/* Entrevista */
+.interview {
+  padding-top: 0;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 calc(-1 * max(16px, env(safe-area-inset-left))) 0 calc(-1 * max(16px, env(safe-area-inset-left)));
+  padding: max(6px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 6px
+    max(16px, env(safe-area-inset-left));
+  background: rgba(243, 246, 245, 0.94);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.indicators {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.listen {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.listen .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--none);
+}
+.listen-escuchando {
+  color: var(--listen);
+}
+.listen-escuchando .dot {
+  background: var(--listen);
+  border-color: var(--listen);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.listen-pausada .dot {
+  border-color: var(--rev);
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .listen-escuchando .dot {
+    animation: none;
+  }
+  .segment.flash {
+    animation: none !important;
+  }
+}
+.conn {
+  color: var(--slate);
+}
+.conn-reconectando,
+.conn-sin_conexion {
+  color: var(--rev);
+}
+.interview-title {
+  font-size: 1.3rem;
+  margin-top: 0.9rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0.75rem 0 1rem;
+  border-bottom: 1.5px solid var(--line);
+}
+.tab {
+  appearance: none;
+  flex: 1;
+  min-height: 46px;
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1.5px;
+  font: 600 0.98rem var(--ui);
+  color: var(--slate);
+  cursor: pointer;
+}
+.tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+.count {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-left: 0.35rem;
+  padding: 0 0.35em;
+  border-radius: 999px;
+  background: var(--rev);
+  color: #fff;
+  font-size: 0.78rem;
+  line-height: 1.4em;
+}
+
+.pane {
+  display: none;
+}
+.panes[data-tab="entrevista"] .pane-entrevista,
+.panes[data-tab="anamnesis"] .pane-anamnesis,
+.panes[data-tab="finalizar"] .pane-finalizar {
+  display: block;
+}
+
+.small-head {
+  font-size: 0.95rem;
+  margin: 0 0 0.25rem;
+}
+.speakers {
+  padding-bottom: 1rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.speaker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+.speaker {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.segments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.segment,
+.interim {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.55rem 0 0.55rem 0.75rem;
+  border-left: 3px solid var(--line);
+  margin: 0 0 0.35rem;
+}
+.segment.role-paciente {
+  border-left-color: var(--ink);
+}
+.segment.role-acompanante {
+  border-left-color: var(--rev);
+}
+.seg-meta {
+  font-size: 0.78rem;
+  color: var(--slate);
+  font-weight: 600;
+}
+.seg-meta time {
+  font-weight: 400;
+  margin-left: 0.3rem;
+  font-variant-numeric: tabular-nums;
+}
+.seg-text {
+  font: 1.05rem/1.5 var(--voice);
+}
+.role-profesional .seg-text {
+  font-family: var(--ui);
+  font-size: 0.98rem;
+  color: var(--slate);
+}
+.interim {
+  border-left-style: dashed;
+}
+.interim .seg-text {
+  color: var(--slate);
+  font-style: italic;
+}
+.segment.flash {
+  animation: flash 1.6s ease-out 1;
+}
+@keyframes flash {
+  from {
+    background: var(--prop-wash);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+/* Borrador */
+.draft-section h2 {
+  margin-top: 1.75rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1.5px solid var(--ink);
+}
+.field {
+  padding: 0.85rem 0 0.85rem 0.85rem;
+  border-left: 4px solid var(--none);
+  border-bottom: 1px solid var(--line);
+}
+.field.st-propuesto {
+  border-left-color: var(--prop);
+}
+.field.st-requiere_revision {
+  border-left-color: var(--rev);
+  background: linear-gradient(90deg, var(--rev-wash), transparent 70%);
+}
+.field.st-confirmado {
+  border-left-color: var(--ok);
+}
+.field-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.chip {
+  font-size: 0.8rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.chip-no_referido {
+  color: var(--none);
+}
+.chip-propuesto {
+  color: var(--prop);
+}
+.chip-requiere_revision {
+  color: var(--rev);
+}
+.chip-confirmado {
+  color: var(--ok);
+}
+.value {
+  margin: 0.35rem 0;
+  max-width: 70ch;
+}
+.tag {
+  display: inline-block;
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--ok);
+  font-weight: 600;
+}
+.reasons {
+  margin: 0.25rem 0;
+  padding-left: 1.1rem;
+  color: var(--rev);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.items {
+  list-style: none;
+  margin: 0.4rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+.item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.5rem;
+}
+.cls {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.05rem 0.45rem;
+  border-radius: var(--r-small);
+  border: 1px solid currentColor;
+  color: var(--slate);
+}
+.cls-negado .cls:first-child {
+  color: var(--ink);
+}
+.cls-familiar .cls:first-child {
+  color: #6b4aa1;
+}
+.cls-historico .cls:first-child {
+  color: #44607a;
+}
+.cls.corr {
+  color: var(--rev);
+}
+.evidence-wrap {
+  display: contents;
+}
+/* El elemento distintivo: la voz del paciente subrayada como en una ficha. */
+.evidence {
+  appearance: none;
+  border: 0;
+  padding: 0.1rem 0;
+  background: linear-gradient(transparent 58%, var(--prop-wash) 58%);
+  font: 1rem/1.45 var(--voice);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.st-requiere_revision .evidence {
+  background: linear-gradient(transparent 58%, rgba(168, 106, 0, 0.22) 58%);
+}
+.evidence time {
+  font: 600 0.75rem var(--ui);
+  color: var(--slate);
+  font-variant-numeric: tabular-nums;
+}
+.evidence.context {
+  background: none;
+  font: 0.85rem var(--ui);
+  color: var(--slate);
+}
+.discarded {
+  width: 100%;
+  font-size: 0.85rem;
+  color: var(--slate);
+  text-decoration: line-through;
+  text-decoration-color: var(--rev);
+}
+.new-info {
+  margin: 0.5rem 0;
+  padding: 0.6rem;
+  border: 1.5px dashed var(--rev);
+  border-radius: var(--r-small);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.edit {
+  margin-top: 0.4rem;
+}
+
+/* Revisión */
+.tally {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem 1rem;
+  margin: 0 0 1rem;
+}
+.tally div {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding: 0.4rem 0;
+}
+.tally dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.check {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  margin: 0.75rem 0;
+  max-width: 62ch;
+}
+.check input {
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  flex: none;
+}
+.export-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.6rem;
+}
+
+/* Controles fijos abajo, al alcance del pulgar */
+.controlbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.7rem max(16px, env(safe-area-inset-right)) calc(0.7rem + env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+/* Consentimiento */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(22, 38, 58, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.sheet {
+  width: 100%;
+  max-width: 560px;
+  max-height: 92vh;
+  overflow: auto;
+  background: var(--surface);
+  border-radius: 14px 14px 0 0;
+  padding: 1.25rem 1.1rem calc(1.1rem + env(safe-area-inset-bottom));
+}
+.sheet h2 {
+  margin-top: 0;
+}
+.radio-row {
+  border: 0;
+  padding: 0;
+  margin: 0.75rem 0;
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+.radio-row legend {
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+.radio-row label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  min-height: 44px;
+}
+.sheet-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+}
+.sheet-actions .btn {
+  flex: 1;
+}
+
+/* Privacidad */
+.providers {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+.providers th,
+.providers td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.55rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+.privacy {
+  max-width: 760px;
+}
+
+/* Computador: transcripción a la izquierda, borrador o revisión a la derecha */
+@media (min-width: 1000px) {
+  .panes {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    gap: 2.5rem;
+    align-items: start;
+  }
+  .pane-entrevista {
+    display: block !important;
+    position: sticky;
+    top: 64px;
+    max-height: calc(100vh - 160px);
+    overflow: auto;
+  }
+  .panes[data-tab="entrevista"] .pane-anamnesis {
+    display: block;
+  }
+  .tab[aria-selected="true"]:first-child {
+    color: var(--slate);
+    border-bottom-color: transparent;
+  }
+  .controlbar {
+    position: sticky;
+    max-width: 520px;
+    margin: 1rem auto 0;
+    border: 1px solid var(--line);
+    border-radius: var(--r-btn);
+  }
+  .interview {
+    padding-bottom: 2rem;
+  }
+}
