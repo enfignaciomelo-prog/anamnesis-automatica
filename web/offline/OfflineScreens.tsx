@@ -573,6 +573,7 @@ function DraftEditor({
   const [state, setState] = useState<{ kind: "inactivo" | "guardando" | "guardado" | "error"; at?: string; msg?: string }>({
     kind: "inactivo",
   });
+  const [conflict, setConflict] = useState<LocalDraft | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef({ values, rev });
   latest.current = { values, rev };
@@ -589,12 +590,11 @@ function DraftEditor({
       latest.current.rev = saved.revision;
       setState({ kind: "guardado", at: saved.updatedAt });
       onSaved();
+      return true;
     } catch (e) {
-      if (e instanceof StaleDraftError) {
-        setValues(e.current.fields);
-        setRev(e.current.revision);
-      }
+      if (e instanceof StaleDraftError) setConflict(e.current);
       setState({ kind: "error", msg: errMsg(e) });
+      return false;
     }
   }, [vault, draft.id, onSaved]);
 
@@ -619,7 +619,7 @@ function DraftEditor({
     setValues((v) => ({ ...v, [id]: text }));
     latest.current = { ...latest.current, values: { ...latest.current.values, [id]: text } };
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => void flush(), 500);
+    if (!conflict) timer.current = setTimeout(() => void flush(), 500);
   };
 
   return (
@@ -648,6 +648,38 @@ function DraftEditor({
         <p className="error" role="alert">
           {state.msg}
         </p>
+      )}
+      {conflict && (
+        <div className="head-actions">
+          <button
+            className="btn"
+            disabled={state.kind === "guardando"}
+            onClick={async () => {
+              setState({ kind: "guardando" });
+              try {
+                await vault.asNewCopy(draft.id, latest.current.values);
+                onSaved();
+                onClose();
+              } catch (e) {
+                setState({ kind: "error", msg: errMsg(e) });
+              }
+            }}
+          >
+            Guardar mi versión como copia
+          </button>
+          <button
+            className="btn"
+            disabled={state.kind === "guardando"}
+            onClick={() => {
+              setValues(conflict.fields);
+              setRev(conflict.revision);
+              setConflict(null);
+              setState({ kind: "inactivo" });
+            }}
+          >
+            Cargar la versión guardada
+          </button>
+        </div>
       )}
       {readOnly && (
         <p className="banner warn" role="status">
@@ -680,8 +712,9 @@ function DraftEditor({
       </p>
       <button
         className="btn primary wide"
+        disabled={Boolean(conflict) || state.kind === "guardando"}
         onClick={async () => {
-          if (timer.current) await flush();
+          if ((timer.current || state.kind === "error") && !(await flush())) return;
           onClose();
         }}
       >

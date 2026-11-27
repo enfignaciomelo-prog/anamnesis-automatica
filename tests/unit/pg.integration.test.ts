@@ -37,7 +37,7 @@ class Client {
   get cookie() {
     return [...this.jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
   }
-  async req(method: string, path: string, body?: unknown, extra: Record<string, string> = {}, redirect: RequestRedirect = "follow") {
+  async req(method: string, path: string, body?: unknown, extra: Record<string, string> = {}, redirect: RequestInit["redirect"] = "follow") {
     const isBuf = Buffer.isBuffer(body);
     const res = await fetch(path.startsWith("http") ? path : BASE + path, {
       method,
@@ -232,7 +232,7 @@ describe("PostgreSQL + Better Auth (integración real)", { skip }, () => {
     // El vínculo persiste en la base: tras reiniciar, reenviar no crea copias.
     await app.close();
     await start();
-    const dup = await a.json<{ interviewId: string; duplicate: boolean }>("POST", "/api/offline/sync", { ...base, revision: 2, fields: {} });
+    const dup = await a.json<{ interviewId: string; duplicate: boolean }>("POST", "/api/offline/sync", { ...base, revision: 2, fields: { motivo: "DEMO v2" } });
     assert.equal(dup.body.duplicate, true);
     assert.equal(dup.body.interviewId, r1.body.interviewId);
     // Otro profesional con el mismo identificador obtiene la suya, nunca la de A.
@@ -246,6 +246,35 @@ describe("PostgreSQL + Better Auth (integración real)", { skip }, () => {
     assert.equal(c.body.reason, "modificada_en_servidor");
     const snap = await a.json<InterviewSnapshot>("GET", `/api/interviews/${r1.body.interviewId}`);
     assert.equal(snap.body.fields.motivo.professionalValue, "DEMO editado en el PC");
+  });
+
+  it("revierte toda la sincronización si falla el guardado del vínculo y permite reintentar", async () => {
+    const { body: session } = await a.json<SessionInfo>("GET", "/api/session");
+    const ownerId = session.professional.id;
+    const draft = {
+      clientId: randomUUID(),
+      templateId: "generica",
+      templateVersion: 1,
+      createdAt: new Date().toISOString(),
+      revision: 1,
+      fields: { motivo: "DEMO reintento" },
+    };
+    const before = await app.store.countInterviews(ownerId);
+    const transaction = app.store.withOfflineSync.bind(app.store);
+    app.store.withOfflineSync = (owner, client, apply) => transaction(owner, client, (store) => {
+      store.saveOfflineLink = async () => { throw new Error("fallo ficticio de guardado"); };
+      return apply(store);
+    });
+    try {
+      const failed = await a.json("POST", "/api/offline/sync", draft);
+      assert.equal(failed.status, 500);
+    } finally {
+      app.store.withOfflineSync = transaction;
+    }
+    assert.equal(await app.store.countInterviews(ownerId), before);
+    const saved = await a.json("POST", "/api/offline/sync", draft);
+    assert.equal(saved.status, 200);
+    assert.equal(await app.store.countInterviews(ownerId), before + 1);
   });
 
   it("tras reiniciar el servidor, la plantilla, su archivo y la anamnesis siguen y se pueden exportar", async () => {

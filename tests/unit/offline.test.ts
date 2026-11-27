@@ -99,6 +99,15 @@ describe("modo sin conexión: sincronización", () => {
     assert.equal(afterN, before + 1);
   });
 
+  it("rechaza el mismo número de revisión con contenido distinto", async () => {
+    const a = await login("demo-a");
+    const d = draft();
+    assert.equal((await a.json("POST", "/api/offline/sync", d)).status, 200);
+    const other = await a.json("POST", "/api/offline/sync", { ...d, fields: { motivo: "DEMO distinto" } });
+    assert.equal(other.status, 409);
+    assert.equal(other.body.reason, "revision_distinta");
+  });
+
   it("una revisión posterior actualiza la misma anamnesis si nadie la cambió en el servidor", async () => {
     const a = await login("demo-a");
     const d = draft();

@@ -389,38 +389,17 @@ export class InterviewService {
 
   // ---- Borradores escritos sin conexión ----
 
-  /** Crea una anamnesis manual (sin escucha) a partir de un borrador del dispositivo. */
-  async createManual(ownerId: string, template: Template, prof: InterviewRecord["prof"], createdAt: number) {
-    const when = new Intl.DateTimeFormat("es-CL", {
-      timeZone: "America/Santiago",
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(createdAt));
-    const r = await this.store.createInterview(ownerId, template, `Anamnesis sin conexión, ${when}`);
-    r.status = "detenida";
-    r.prof = prof;
-    await this.commit(r);
-    logEvent("interview_created_offline");
-    return r;
+  /** Devuelve el registro en memoria si hay una pantalla abierta. */
+  liveRecord(id: string) {
+    return this.live.get(id);
   }
 
-  /** Registro actual (en memoria o guardado), o undefined si no existe para este dueño. */
-  async find(ownerId: string, id: string) {
-    try {
-      return await this.get(ownerId, id);
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** Reemplaza el texto del profesional con el de una revisión posterior del mismo borrador. */
-  async replaceManual(r: InterviewRecord, prof: InterviewRecord["prof"]) {
-    this.requireEditable(r);
-    r.prof = prof;
-    await this.commit(r);
-    return r;
+  /** Publica la revisión después de confirmar la transacción de sincronización. */
+  publishOfflineUpdate(r: InterviewRecord, shouldRefresh: (live: InterviewRecord) => boolean) {
+    const live = this.live.get(r.id);
+    if (!live || !shouldRefresh(live)) return;
+    Object.assign(live, r);
+    this.broadcast(live);
   }
 
   /** Elimina entrevistas vencidas según la retención de cada profesional. */

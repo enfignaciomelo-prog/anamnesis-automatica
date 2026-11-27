@@ -116,6 +116,24 @@ def main() -> int:
         expect(page.get_by_text("Pendiente de sincronizar")).to_be_visible()
         page.get_by_role("button", name="Editar").first.click()
         expect(page.get_by_role("textbox", name="Motivo de consulta")).to_have_value(SECRET)
+
+        other = ctx.new_page()
+        other.goto(BASE)
+        unlock(other)
+        other.get_by_role("button", name="Editar").first.click()
+        other_field = other.get_by_role("textbox", name="Motivo de consulta")
+        expect(other_field).to_have_value(SECRET)
+        page.get_by_role("textbox", name="Motivo de consulta").fill(SECRET + " versión guardada")
+        page.get_by_role("button", name="Guardar y volver").click()
+        expect(page.get_by_role("heading", name="Borradores en este dispositivo")).to_be_visible()
+        other_field.fill("DEMO edición de otra pestaña")
+        expect(other.get_by_role("alert")).to_contain_text("Tus cambios siguen abiertos en este editor")
+        expect(other_field).to_have_value("DEMO edición de otra pestaña")
+        other.get_by_role("button", name="Cargar la versión guardada").click()
+        expect(other_field).to_have_value(SECRET + " versión guardada")
+        other.close()
+        page.get_by_role("button", name="Editar").first.click()
+        page.get_by_role("textbox", name="Motivo de consulta").fill(SECRET)
         page.get_by_role("button", name="Guardar y volver").click()
         assert not api_calls, f"desbloquear no debe contactar al servidor: {api_calls}"
         shot(page, "42-offline-recarga-sin-conexion")
@@ -177,10 +195,10 @@ def main() -> int:
         pg2.get_by_role("textbox", name="Motivo de consulta").fill("DEMO borrador que vence en el corte")
         expect(pg2.get_by_text("Guardado en este dispositivo", exact=False)).to_be_visible(timeout=5000)
         assert pg2.evaluate(RAW_IDB)["spaces"] == 1
-        pg2.wait_for_function("""async () => {
-          const dbs = indexedDB.databases ? await indexedDB.databases() : [];
-          return !dbs.some(d => d.name === 'aa-offline');
-        }""", timeout=30000, polling=500)
+        pg2.wait_for_function(
+            f"async () => {{ const {{ spaces, records }} = await ({RAW_IDB})(); return spaces === 0 && records === 0; }}",
+            timeout=30000, polling=500,
+        )
         assert "DEMO borrador que vence" not in pg2.evaluate("document.body.innerText")
         shot(pg2, "44-offline-corte")
         pg2.context.set_offline(False)

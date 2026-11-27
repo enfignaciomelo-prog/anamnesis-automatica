@@ -87,6 +87,8 @@ export interface OfflineLink {
   revision: number;
   /** Huella del contenido del servidor justo después de aplicarla (detecta cambios posteriores). */
   contentHash: string;
+  /** Huella del último envío aplicado, si se guardó con esta versión. */
+  requestHash?: string;
 }
 
 export interface InterviewFilter {
@@ -123,6 +125,7 @@ export interface Store {
   getImport(ownerId: string, id: string): Promise<PendingImport | undefined>;
   deleteImport(ownerId: string, id: string): Promise<void>;
 
+  withOfflineSync<T>(ownerId: string, clientId: string, apply: (store: Store) => Promise<T>): Promise<T>;
   getOfflineLink(ownerId: string, clientId: string): Promise<OfflineLink | undefined>;
   saveOfflineLink(link: OfflineLink): Promise<void>;
 
@@ -265,6 +268,10 @@ export class MemoryStore implements Store {
   async deleteImport(ownerId: string, id: string) {
     const r = this.imports.get(id);
     if (r && r.ownerId === ownerId) this.imports.delete(id);
+  }
+
+  withOfflineSync<T>(_ownerId: string, _clientId: string, apply: (store: Store) => Promise<T>): Promise<T> {
+    return apply(this);
   }
 
   async getOfflineLink(ownerId: string, clientId: string) {
