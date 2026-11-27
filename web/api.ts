@@ -154,6 +154,7 @@ export const api = {
     save<InterviewSnapshot>("POST", `/api/interviews/${id}/fields/${fieldId}/confirm`, { value }),
   notReported: (id: string, fieldId: string) =>
     save<InterviewSnapshot>("POST", `/api/interviews/${id}/fields/${fieldId}/no-referido`, {}),
+  requestFill: (id: string) => save<InterviewSnapshot>("POST", `/api/interviews/${id}/ai`, {}),
   finalize: (id: string, attested: boolean) => save<InterviewSnapshot>("POST", `/api/interviews/${id}/finalize`, { attested }),
 };
 
