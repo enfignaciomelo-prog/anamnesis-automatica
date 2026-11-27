@@ -2,6 +2,8 @@
  * Validación de archivos subidos. Los archivos son contenido no confiable:
  * se leen como datos, nunca se ejecutan macros, fórmulas ni instrucciones.
  */
+import { crc32 } from "node:zlib";
+import { fromBufferPromise, type Entry } from "yauzl";
 import JSZip from "jszip";
 import type { SourceKind } from "../../shared/types";
 import { HttpError } from "../http";
@@ -34,27 +36,61 @@ export function detectKind(fileName: string, bytes: Buffer): SourceKind {
 
 /** Abre un paquete de Office con límites y rechaza contenido con macros. */
 export async function openOfficeZip(bytes: Buffer, kind: "docx" | "xlsx"): Promise<JSZip> {
-  let zip: JSZip;
+  if (bytes.length > MAX_UPLOAD_BYTES)
+    throw new HttpError(413, "archivo_grande", "El archivo supera el límite de 5 MB.");
+
   try {
-    zip = await JSZip.loadAsync(bytes, { checkCRC32: true });
-  } catch {
+    const source = await fromBufferPromise(bytes, { lazyEntries: true, autoClose: false, strictFileNames: true });
+    try {
+      if (source.entryCount > MAX_ENTRIES)
+        throw new HttpError(422, "archivo_complejo", "El archivo tiene demasiadas partes.");
+
+      const entries: Entry[] = [];
+      const names = new Set<string>();
+      let declared = 0;
+      for await (const entry of source.eachEntry()) {
+        if (names.has(entry.fileName))
+          throw new HttpError(422, "archivo_invalido", "El archivo contiene partes duplicadas.");
+        names.add(entry.fileName);
+        if (/vbaProject\.bin$/i.test(entry.fileName))
+          throw new HttpError(415, "macros", "El archivo contiene macros y no se acepta. Guárdalo sin macros.");
+        declared += entry.uncompressedSize;
+        if (declared > MAX_UNCOMPRESSED)
+          throw new HttpError(422, "archivo_grande", "El archivo descomprimido es demasiado grande.");
+        if (!entry.fileName.endsWith("/")) entries.push(entry);
+      }
+
+      const main = kind === "docx" ? "word/document.xml" : "xl/workbook.xml";
+      if (!names.has(main))
+        throw new HttpError(422, "archivo_invalido", `El archivo no parece un ${kind === "docx" ? "documento Word" : "libro Excel"} válido.`);
+
+      // Solo se entrega a los analizadores contenido ya verificado. Yauzl corta
+      // el flujo si excede el tamaño declarado para la entrada.
+      const zip = new JSZip();
+      let expanded = 0;
+      for (const entry of entries) {
+        const stream = await source.openReadStreamPromise(entry);
+        const chunks: Buffer[] = [];
+        let checksum = 0;
+        for await (const chunk of stream as AsyncIterable<Buffer>) {
+          expanded += chunk.length;
+          if (expanded > MAX_UNCOMPRESSED)
+            throw new HttpError(422, "archivo_grande", "El archivo descomprimido es demasiado grande.");
+          checksum = crc32(chunk, checksum);
+          chunks.push(chunk);
+        }
+        if (checksum !== entry.crc32) throw new Error("CRC inválido");
+        zip.file(entry.fileName, Buffer.concat(chunks), { createFolders: false, date: entry.getLastModDate() });
+      }
+      const types = (await zip.file("[Content_Types].xml")?.async("string")) ?? "";
+      if (/macroEnabled/i.test(types))
+        throw new HttpError(415, "macros", "El archivo contiene macros y no se acepta. Guárdalo sin macros.");
+      return zip;
+    } finally {
+      source.close();
+    }
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
     throw new HttpError(422, "archivo_danado", "No se pudo leer el archivo. Puede estar dañado o protegido con contraseña.");
   }
-  const names = Object.keys(zip.files);
-  if (names.length > MAX_ENTRIES) throw new HttpError(422, "archivo_complejo", "El archivo tiene demasiadas partes.");
-  let total = 0;
-  for (const n of names) {
-    if (n.includes("..") || n.startsWith("/")) throw new HttpError(422, "archivo_invalido", "El archivo tiene rutas no válidas.");
-    const size = (zip.files[n] as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0;
-    total += size;
-  }
-  if (total > MAX_UNCOMPRESSED)
-    throw new HttpError(422, "archivo_grande", "El archivo descomprimido es demasiado grande.");
-  const types = (await zip.file("[Content_Types].xml")?.async("string")) ?? "";
-  if (names.some((n) => /vbaProject\.bin$/i.test(n)) || /macroEnabled/i.test(types))
-    throw new HttpError(415, "macros", "El archivo contiene macros y no se acepta. Guárdalo sin macros.");
-  const main = kind === "docx" ? "word/document.xml" : "xl/workbook.xml";
-  if (!zip.file(main))
-    throw new HttpError(422, "archivo_invalido", `El archivo no parece un ${kind === "docx" ? "documento Word" : "libro Excel"} válido.`);
-  return zip;
 }

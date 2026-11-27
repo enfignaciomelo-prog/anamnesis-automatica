@@ -78,7 +78,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (transport === "resend" && (!env.RESEND_API_KEY || !env.EMAIL_FROM))
     throw new Error("Faltan RESEND_API_KEY y EMAIL_FROM (o usa EMAIL_TRANSPORT=prueba fuera de producción).");
 
-  // TLS de PostgreSQL: en producción, obligatorio y verificado contra el CA del proveedor.
+  // TLS de PostgreSQL: en producción, obligatorio y verificado con las raíces de confianza de Node o la CA del proveedor.
   const dbUrl = env.DATABASE_URL!;
   let parsed: URL;
   try {
@@ -86,18 +86,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   } catch {
     throw new Error("DATABASE_URL no es una URL válida.");
   }
-  const urlSslMode = parsed.searchParams.get("sslmode");
   const caCert = env.DATABASE_CA_CERT?.trim() || undefined;
   if (production) {
     if (env.DATABASE_SSL === "disable")
       throw new Error("En producción no se permite DATABASE_SSL=disable: la conexión a PostgreSQL debe usar TLS verificado.");
-    if (urlSslMode && !["require", "verify-ca", "verify-full"].includes(urlSslMode))
-      throw new Error(`En producción no se permite sslmode=${urlSslMode} en DATABASE_URL.`);
-    if (!caCert)
-      throw new Error("En producción falta DATABASE_CA_CERT: se requiere el certificado del proveedor para verificar PostgreSQL.");
-    if (!caCert.includes("BEGIN CERTIFICATE"))
-      throw new Error("DATABASE_CA_CERT no parece un certificado PEM.");
+    if (parsed.searchParams.getAll("sslmode").some((mode) => !["require", "verify-ca", "verify-full"].includes(mode)))
+      throw new Error("DATABASE_URL contiene un sslmode incompatible con TLS verificado.");
+    if (parsed.searchParams.getAll("ssl").some((value) => !["1", "true"].includes(value)))
+      throw new Error("DATABASE_URL contiene un valor ssl incompatible con TLS verificado.");
   }
+  if (caCert && !caCert.includes("BEGIN CERTIFICATE"))
+    throw new Error("DATABASE_CA_CERT no parece un certificado PEM.");
   if (env.DATABASE_SSL && !["disable", "verify"].includes(env.DATABASE_SSL))
     throw new Error("DATABASE_SSL solo admite «verify» o «disable» (este último, solo fuera de producción).");
   return {

@@ -134,7 +134,7 @@ borrador de anamnesis según la plantilla seleccionada.
 - **Escucha:** pertenece a la sesión que la inició o reanudó; solo esa sesión
   queda exenta del bloqueo por inactividad y solo su cierre, vencimiento o
   revocación pausa la escucha (no la de una sesión observadora).
-- **TLS PostgreSQL:** en producción, verificado con `DATABASE_CA_CERT`; prohibido
+- **TLS PostgreSQL:** en producción, verificado con las raíces de Node o `DATABASE_CA_CERT`; prohibido
   `rejectUnauthorized:false`, `DATABASE_SSL=disable` y `sslmode` sin verificación.
 
 ## Orden de trabajo vigente

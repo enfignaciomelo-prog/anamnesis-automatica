@@ -114,6 +114,27 @@ describe("importación segura", () => {
     assert.equal(r.status, 400);
   });
 
+  it("rechaza paquetes con demasiadas partes", async () => {
+    const c = await login("demo-a");
+    const zip = new JSZip();
+    zip.file("word/document.xml", "<w:document/>", { createFolders: false });
+    for (let i = 0; i < 1500; i++) zip.file(`parte-${i}.xml`, "<parte/>");
+    const bytes = await zip.generateAsync({ type: "nodebuffer" });
+    const r = await c.upload("muchas-partes.docx", bytes);
+    assert.equal(r.status, 422);
+    assert.equal(r.body.error, "archivo_complejo");
+  });
+
+  it("rechaza un documento cuyo tamaño expandido supera el presupuesto", async () => {
+    const c = await login("demo-a");
+    const zip = await JSZip.loadAsync(fx("ficha-demo.docx"));
+    zip.file("word/document.xml", " ".repeat(40 * 1024 * 1024 + 1));
+    const bytes = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+    const r = await c.upload("documento-grande.docx", bytes);
+    assert.equal(r.status, 422);
+    assert.equal(r.body.error, "archivo_grande");
+  });
+
   it("rechaza archivos de más de 5 MB", async () => {
     const c = await login("demo-a");
     const big = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(5 * 1024 * 1024 + 10)]);
@@ -192,6 +213,29 @@ describe("Word con marcadores y etiquetas", () => {
     assert.match(xml, /\[DEMO\] Refiere «Vengo porque/);
   });
 
+  it("bloquea el formato original si un destino guardado no existe", async () => {
+    const { body: session } = await c.json<{ professional: { id: string } }>("GET", "/api/session");
+    const { body: snap } = await c.json<InterviewSnapshot>("POST", "/api/interviews", { templateId: tpl.id });
+    const saved = await app.store.getInterview(session.professional.id, snap.id);
+    assert.ok(saved);
+    const field = saved.template.sections.flatMap((section) => section.fields).find((f) => f.target);
+    assert.ok(field);
+    field.target = { kind: "bookmark", name: "marcador_inexistente" };
+    saved.status = "finalizada";
+    await app.store.saveInterview(saved);
+
+    const path = `/api/interviews/${snap.id}/export?format=`;
+    const original = await c.req("GET", path + "original");
+    assert.equal(original.status, 409);
+    assert.equal(original.headers.get("content-disposition"), null);
+    const error = (await original.json()) as { error: string; message: string };
+    assert.equal(error.error, "exportacion_incompleta");
+    assert.match(error.message, /formato estándar/);
+    const standard = await c.req("GET", path + "docx");
+    assert.equal(standard.status, 200);
+    await standard.arrayBuffer();
+  });
+
   it("versiona: la entrevista anterior conserva su versión", async () => {
     const { body: d } = await c.json<TemplateDetail>("GET", `/api/templates/${tpl.id}`);
     const sections = d.sections.map((s) => ({ ...s }));
@@ -256,6 +300,25 @@ describe("Excel con hoja y celda", () => {
     const sheet2 = await zip.file("xl/worksheets/sheet2.xml")!.async("string");
     assert.match(sheet2, /<c r="B4"[^>]*t="inlineStr"><is><t xml:space="preserve">\[DEMO\] Responde «Una vez al mes»/);
   });
+  it("bloquea la descarga si dos campos mapeados apuntan a la misma celda", async () => {
+    const c = await login("demo-b");
+    const { body: a } = await c.upload("ficha-demo.xlsx", fx("ficha-demo.xlsx"));
+    const body = bodyFrom(a);
+    const fields = body.sections.flatMap((s) => s.fields);
+    fields[1].target = fields[0].target;
+    const { body: tpl } = await c.json<TemplateDetail>("POST", `/api/templates/import/${a.importId}/confirm`, body);
+    const { body: session } = await c.json<{ professional: { id: string } }>("GET", "/api/session");
+    const { body: snap } = await c.json<InterviewSnapshot>("POST", "/api/interviews", { templateId: tpl.id });
+    const saved = await app.store.getInterview(session.professional.id, snap.id);
+    assert.ok(saved);
+    saved.status = "finalizada";
+    await app.store.saveInterview(saved);
+
+    const r = await c.json("GET", `/api/interviews/${snap.id}/export?format=original`);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error, "exportacion_incompleta");
+  });
+
 });
 
 describe("PDF", () => {

@@ -307,7 +307,7 @@ export class TemplateService {
     const file = await this.store.getFile(ownerId, source.fileId);
     if (!file) throw new HttpError(410, "archivo_no_disponible", "El archivo original ya no está disponible.");
     if (file.kind === "pdf") throw new HttpError(400, "pdf_sin_destino", "Los PDF no admiten destinos: se exportan con el formato estándar.");
-    const zip = await JSZip.loadAsync(file.bytes);
+    const zip = await openOfficeZip(file.bytes, file.kind);
     const sheets = file.kind === "xlsx" ? (await sheetsOf(zip)).map((s) => s.name) : [];
     for (const f of fields) {
       const t = f.target!;
@@ -325,16 +325,20 @@ export class TemplateService {
 
   // ---- Exportación en el formato original ----
 
-  async exportOriginal(ownerId: string, snap: InterviewSnapshot): Promise<{ bytes: Buffer; kind: "docx" | "xlsx"; missing: number }> {
+  async exportOriginal(ownerId: string, snap: InterviewSnapshot): Promise<{ bytes: Buffer; kind: "docx" | "xlsx" }> {
     const src = snap.template.source;
     if (!src || src.kind === "pdf")
       throw new HttpError(400, "sin_original", "Esta plantilla no tiene un archivo Word o Excel para llenar.");
     const file = await this.store.getFile(ownerId, src.fileId);
     if (!file) throw new HttpError(410, "archivo_no_disponible", "El archivo original ya no está disponible.");
-    const zip = await JSZip.loadAsync(file.bytes);
+    const zip = await openOfficeZip(file.bytes, src.kind);
     const prefix = snap.demo ? "[DEMO] " : "";
     const mapped = allFields(snap.template).filter((f) => f.target);
     if (src.kind === "xlsx") {
+      // Dos campos en la misma celda se sobrescribirían aunque ambos se
+      // contaran como escritos.
+      const distinct = new Set(mapped.map((f) => targetKey(f.target!)));
+      requireCompleteExport(distinct.size, mapped.length);
       const res = await fillXlsx(
         zip,
         mapped
@@ -344,8 +348,8 @@ export class TemplateService {
             return { sheet: t.sheet, cell: t.cell, value: prefix + finalValue(snap.fields[f.id]) };
           }),
       );
-      const bytes = await pack(zip);
-      return { bytes, kind: "xlsx", missing: res.skipped.length };
+      requireCompleteExport(res.placed, mapped.length);
+      return { bytes: await pack(zip), kind: "xlsx" };
     }
     const res = await fillDocx(
       zip,
@@ -356,6 +360,7 @@ export class TemplateService {
           value: prefix + finalValue(snap.fields[f.id]),
         })),
     );
+    requireCompleteExport(res.placed, mapped.length);
     if (snap.demo) {
       // Marca visible al inicio del cuerpo: documento con datos ficticios.
       const doc = await zip.file("word/document.xml")!.async("string");
@@ -364,9 +369,14 @@ export class TemplateService {
       )}</w:t></w:r></w:p>`;
       zip.file("word/document.xml", doc.replace(/(<w:body\b[^>]*>)/, `$1${banner}`));
     }
-    const bytes = await pack(zip);
-    return { bytes, kind: "docx", missing: res.missing.length };
+    return { bytes: await pack(zip), kind: "docx" };
   }
+}
+
+function requireCompleteExport(placed: number, expected: number) {
+  if (placed !== expected)
+    throw new HttpError(409, "exportacion_incompleta",
+      "No se pudo completar el formato original. Descarga el formato estándar para incluir todos los campos de la anamnesis.");
 }
 
 /** Sin entradas de carpeta: Word puede rechazar el archivo en servicios en la nube (skill docx). */

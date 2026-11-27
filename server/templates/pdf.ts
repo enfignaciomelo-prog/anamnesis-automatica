@@ -46,17 +46,15 @@ export async function pdfLines(bytes: Buffer): Promise<string[][]> {
   return pages;
 }
 
-async function hasCommand(cmd: string, arg: string) {
+export async function ocrAvailable() {
   try {
-    await run(cmd, [arg], { timeout: 5000 });
+    const { stdout } = await run("tesseract", ["--list-langs"], { timeout: 5000 });
+    if (!stdout.split(/\r?\n/).some((lang) => lang.trim() === "spa")) return false;
+    await run("pdftoppm", ["-v"], { timeout: 5000 });
     return true;
   } catch {
     return false;
   }
-}
-
-export async function ocrAvailable() {
-  return (await hasCommand("tesseract", "--version")) && (await hasCommand("pdftoppm", "-v"));
 }
 
 /** OCR en español de las primeras páginas. Sin shell: argumentos fijos y límite de tiempo. */

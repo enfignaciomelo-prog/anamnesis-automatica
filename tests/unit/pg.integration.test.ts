@@ -37,7 +37,7 @@ class Client {
   get cookie() {
     return [...this.jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
   }
-  async req(method: string, path: string, body?: unknown, extra: Record<string, string> = {}, redirect: RequestRedirect = "follow") {
+  async req(method: string, path: string, body?: unknown, extra: Record<string, string> = {}, redirect: RequestInit["redirect"] = "follow") {
     const isBuf = Buffer.isBuffer(body);
     const res = await fetch(path.startsWith("http") ? path : BASE + path, {
       method,

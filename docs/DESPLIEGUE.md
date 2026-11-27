@@ -22,9 +22,10 @@ configurado, usa el modo demostración.
 2. Project Settings → Database → **Connection string → Session pooler** (IPv4,
    puerto 5432). Esa cadena es `DATABASE_URL` (incluye la contraseña de la base).
 3. Project Settings → Database → **SSL Configuration → Download certificate**.
-   Su contenido (texto PEM) es `DATABASE_CA_CERT`. **Es obligatorio en
-   producción**: el servidor no arranca sin él, ni con `DATABASE_SSL=disable`, ni
-   con un `sslmode` que no verifique. No existe opción sin verificación.
+   Configura el texto PEM como `DATABASE_CA_CERT` si la conexión requiere una CA
+   del proveedor. Si se omite, Node verifica el certificado con sus raíces de
+   confianza. En producción usa TLS verificado y configura la URL con
+   `sslmode=verify-full` si incluye un modo SSL.
 4. Activa **Enforce SSL**.
 5. La app crea sus tablas en el esquema `anamnesis` (no expuesto por la API de
    datos de Supabase) con RLS activado. No uses la `anon key` en ninguna parte.
@@ -54,7 +55,7 @@ configurado, usa el modo demostración.
 | `NODE_ENV` | ambos | `production` en Render |
 | `TRUST_PROXY` | ambos | `true` detrás del HTTPS de Render |
 | `DATABASE_URL` | cuentas | Cadena del *Session pooler* de Supabase |
-| `DATABASE_CA_CERT` | cuentas | Certificado PEM de Supabase (**obligatorio en producción**) |
+| `DATABASE_CA_CERT` | cuentas | CA en PEM, si el proveedor la requiere |
 | `BETTER_AUTH_SECRET` | cuentas | Generado por Render (≥ 32 caracteres) |
 | `BETTER_AUTH_URL` | cuentas | URL pública https del servicio |
 | `RESEND_API_KEY` | cuentas | Clave de Resend |

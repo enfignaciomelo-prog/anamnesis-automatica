@@ -218,7 +218,11 @@ export async function fillXlsx(zip: JSZip, fills: XlsxFill[]): Promise<{ placed:
         inner = inner.slice(0, insertAt) + cellXml(f.cell, undefined, f.value) + inner.slice(insertAt);
         xml = xml.slice(0, r.index) + open + inner + "</row>" + xml.slice(r.index + r[0].length);
       } else {
-        const sd = /<sheetData>([\s\S]*?)<\/sheetData>/.exec(xml)!;
+        const sd = /<sheetData>([\s\S]*?)<\/sheetData>/.exec(xml);
+        if (!sd) {
+          skipped.push(`${f.sheet}!${f.cell}`);
+          continue;
+        }
         const start = sd.index + "<sheetData>".length;
         let insertAt = start + sd[1].length;
         for (const rr of sd[1].matchAll(/<row\b[^>]*\sr="(\d+)"/g)) {
