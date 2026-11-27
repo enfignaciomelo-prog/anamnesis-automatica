@@ -114,10 +114,11 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Espacios por profesional | ✅ | Cada profesional tiene su espacio y su frase; otro profesional del mismo dispositivo no lo ve ni lo abre (probado). |
 | Desbloqueo local | ✅ | No contacta al servidor ni prolonga la sesión (probado). Se bloquea al ocultar la página, por inactividad, con «Bloquear» y al cerrar sesión. |
 | Estados | ✅ | «Guardado en este dispositivo», «Pendiente de sincronizar», «Sincronizado con tu cuenta», «Error de sincronización». |
-| Sincronización idempotente | ✅ | Identificador del borrador + revisión; reenviar (respuesta perdida, dos pestañas, reinicio del servidor) no crea copias (probado en memoria y PostgreSQL). |
+| Sincronización idempotente | ✅ | Identificador del borrador + revisión; reenviar (respuesta perdida, dos pestañas, reinicio del servidor) no crea copias. PostgreSQL guarda la anamnesis y el vínculo en una transacción. Una revisión con otro contenido devuelve 409. |
 | Conflictos sin sobrescritura | ✅ | Si la anamnesis se editó, finalizó o eliminó en la cuenta, el servidor responde 409; el dispositivo conserva su copia y el profesional elige: ver, guardar como anamnesis nueva o descartar. |
 | Tras sincronizar | ✅ | Se elimina el contenido del dispositivo; queda solo la referencia. Revisión y finalización en Mis anamnesis. |
 | Corte diario | ✅ / límite | «Los borradores guardados solo en este dispositivo se eliminan en el corte diario, aunque no se hayan sincronizado.» Aviso 5 minutos antes (intenta sincronizar), eliminación al llegar el corte con la app abierta, y al reabrir antes de mostrar nada. También si el reloj del equipo retrocede. Con la app cerrada no se puede borrar en el momento exacto. |
 | Cerrar sesión | ✅ | Conserva los borradores cifrados hasta el corte (para no perder trabajo hecho sin conexión); se pueden eliminar a mano. |
 | Abrir la app sin conexión | ✅ | El service worker precarga la app; sin servidor se ofrece desbloquear los borradores del dispositivo. |
+| Guardado en varias pestañas | ✅ | IndexedDB confirma la revisión que se está editando y rechaza la segunda escritura concurrente. Los guardados tardíos no recrean espacios eliminados. |
 | Voz e IA sin conexión | ⏳ Evaluación | Ver `docs/VOZ_IA_OFFLINE.md`. No implementado. |

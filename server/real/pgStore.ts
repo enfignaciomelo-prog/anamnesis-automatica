@@ -81,10 +81,15 @@ export class PgStore implements Store {
   constructor(
     private pool: pg.Pool,
     private defaults: { idleMinutes: number },
+    private transaction?: pg.PoolClient,
   ) {}
 
+  private get db() {
+    return this.transaction ?? this.pool;
+  }
+
   async getProfessional(id: string): Promise<Professional | undefined> {
-    const { rows } = await this.pool.query(
+    const { rows } = await this.db.query(
       `SELECT u.id, u.name, s.history_retention_days, s.idle_minutes
          FROM "user" u LEFT JOIN professional_settings s ON s.user_id = u.id WHERE u.id = $1`,
       [id],
@@ -100,7 +105,7 @@ export class PgStore implements Store {
   }
 
   async upsertProfessional(p: Professional) {
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO professional_settings (user_id, history_retention_days, idle_minutes, updated_at)
        VALUES ($1, $2, $3, now())
        ON CONFLICT (user_id) DO UPDATE SET history_retention_days = $2, idle_minutes = $3, updated_at = now()`,
@@ -125,7 +130,7 @@ export class PgStore implements Store {
       pauseReason: null,
       finalizedAt: null,
     };
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO interviews (id, owner_id, title, status, template, created_at, last_activity)
        VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0), to_timestamp($6 / 1000.0))`,
       [rec.id, ownerId, title, rec.status, j(rec.template), now],
@@ -135,7 +140,8 @@ export class PgStore implements Store {
 
   async getInterview(ownerId: string, id: string) {
     if (!/^[0-9a-f-]{36}$/i.test(id)) return undefined;
-    const { rows } = await this.pool.query("SELECT * FROM interviews WHERE id = $1 AND owner_id = $2", [id, ownerId]);
+    const lock = this.transaction ? " FOR UPDATE" : "";
+    const { rows } = await this.db.query("SELECT * FROM interviews WHERE id = $1 AND owner_id = $2" + lock, [id, ownerId]);
     return rows[0] ? toInterview(rows[0]) : undefined;
   }
 
@@ -152,7 +158,7 @@ export class PgStore implements Store {
     }
     if (f.state === "revisada") where.push("status = 'finalizada'");
     if (f.state === "borrador") where.push("status <> 'finalizada'");
-    const { rows } = await this.pool.query(
+    const { rows } = await this.db.query(
       `SELECT * FROM interviews WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT 500`,
       args,
     );
@@ -160,7 +166,7 @@ export class PgStore implements Store {
   }
 
   async saveInterview(r: InterviewRecord) {
-    const res = await this.pool.query(
+    const res = await this.db.query(
       `UPDATE interviews SET title = $3, status = $4, template = $5, consent = $6, segments = $7,
               speaker_roles = $8, prof = $9, pause_reason = $10,
               last_activity = to_timestamp($11 / 1000.0),
@@ -186,17 +192,17 @@ export class PgStore implements Store {
 
   async deleteInterview(ownerId: string, id: string) {
     if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
-    const res = await this.pool.query("DELETE FROM interviews WHERE id = $1 AND owner_id = $2", [id, ownerId]);
+    const res = await this.db.query("DELETE FROM interviews WHERE id = $1 AND owner_id = $2", [id, ownerId]);
     return (res.rowCount ?? 0) > 0;
   }
 
   async countInterviews(ownerId: string) {
-    const { rows } = await this.pool.query("SELECT count(*)::int AS n FROM interviews WHERE owner_id = $1", [ownerId]);
+    const { rows } = await this.db.query("SELECT count(*)::int AS n FROM interviews WHERE owner_id = $1", [ownerId]);
     return rows[0].n as number;
   }
 
   async saveTemplate(t: TemplateRecord) {
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO templates (id, owner_id, name, source, versions, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0), to_timestamp($7 / 1000.0))
        ON CONFLICT (id) DO UPDATE SET name = $3, source = $4, versions = $5, updated_at = to_timestamp($7 / 1000.0)
@@ -206,23 +212,23 @@ export class PgStore implements Store {
   }
 
   async getTemplate(ownerId: string, id: string) {
-    const { rows } = await this.pool.query("SELECT * FROM templates WHERE id = $1 AND owner_id = $2", [id, ownerId]);
+    const { rows } = await this.db.query("SELECT * FROM templates WHERE id = $1 AND owner_id = $2", [id, ownerId]);
     return rows[0] ? toTemplate(rows[0]) : undefined;
   }
 
   async listTemplates(ownerId: string) {
-    const { rows } = await this.pool.query("SELECT * FROM templates WHERE owner_id = $1 ORDER BY updated_at DESC", [ownerId]);
+    const { rows } = await this.db.query("SELECT * FROM templates WHERE owner_id = $1 ORDER BY updated_at DESC", [ownerId]);
     return rows.map(toTemplate);
   }
 
   async deleteTemplate(ownerId: string, id: string) {
-    const res = await this.pool.query("DELETE FROM templates WHERE id = $1 AND owner_id = $2", [id, ownerId]);
+    const res = await this.db.query("DELETE FROM templates WHERE id = $1 AND owner_id = $2", [id, ownerId]);
     return (res.rowCount ?? 0) > 0;
   }
 
   async putFile(f: Omit<FileRecord, "id">) {
     const id = `file_${randomUUID()}`;
-    await this.pool.query("INSERT INTO files (id, owner_id, kind, file_name, bytes) VALUES ($1, $2, $3, $4, $5)", [
+    await this.db.query("INSERT INTO files (id, owner_id, kind, file_name, bytes) VALUES ($1, $2, $3, $4, $5)", [
       id,
       f.ownerId,
       f.kind,
@@ -233,7 +239,7 @@ export class PgStore implements Store {
   }
 
   async getFile(ownerId: string, id: string) {
-    const { rows } = await this.pool.query(
+    const { rows } = await this.db.query(
       "SELECT id, owner_id, kind, file_name, bytes FROM files WHERE id = $1 AND owner_id = $2",
       [id, ownerId],
     );
@@ -242,11 +248,11 @@ export class PgStore implements Store {
   }
 
   async deleteFile(ownerId: string, id: string) {
-    await this.pool.query("DELETE FROM files WHERE id = $1 AND owner_id = $2", [id, ownerId]);
+    await this.db.query("DELETE FROM files WHERE id = $1 AND owner_id = $2", [id, ownerId]);
   }
 
   async fileInUse(ownerId: string, fileId: string) {
-    const { rows } = await this.pool.query(
+    const { rows } = await this.db.query(
       `SELECT (EXISTS (SELECT 1 FROM templates WHERE owner_id = $1 AND source->>'fileId' = $2)
             OR EXISTS (SELECT 1 FROM interviews WHERE owner_id = $1 AND template->'source'->>'fileId' = $2)) AS used`,
       [ownerId, fileId],
@@ -256,7 +262,7 @@ export class PgStore implements Store {
 
   async putImport(p: Omit<PendingImport, "id" | "expiresAt">, ttlMs: number) {
     const rec: PendingImport = { ...p, id: p.analysis.importId, expiresAt: Date.now() + ttlMs };
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO pending_imports (id, owner_id, file_id, analysis, valid_targets, expires_at)
        VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0))`,
       [rec.id, rec.ownerId, rec.fileId, j(rec.analysis), j([...rec.validTargets]), rec.expiresAt],
@@ -265,7 +271,7 @@ export class PgStore implements Store {
   }
 
   async getImport(ownerId: string, id: string) {
-    const { rows } = await this.pool.query(
+    const { rows } = await this.db.query(
       "SELECT * FROM pending_imports WHERE id = $1 AND owner_id = $2 AND expires_at > now()",
       [id, ownerId],
     );
@@ -283,35 +289,52 @@ export class PgStore implements Store {
   }
 
   async deleteImport(ownerId: string, id: string) {
-    await this.pool.query("DELETE FROM pending_imports WHERE id = $1 AND owner_id = $2", [id, ownerId]);
+    await this.db.query("DELETE FROM pending_imports WHERE id = $1 AND owner_id = $2", [id, ownerId]);
+  }
+
+  async withOfflineSync<T>(ownerId: string, clientId: string, apply: (store: Store) => Promise<T>) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Dos instancias del servidor también serializan el mismo borrador.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 8731))", [JSON.stringify([ownerId, clientId])]);
+      const result = await apply(new PgStore(this.pool, this.defaults, client));
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getOfflineLink(ownerId: string, clientId: string): Promise<OfflineLink | undefined> {
-    const { rows } = await this.pool.query(
-      "SELECT interview_id, revision, content_hash FROM offline_sync WHERE owner_id = $1 AND client_id = $2",
+    const { rows } = await this.db.query(
+      "SELECT interview_id, revision, content_hash, request_hash FROM offline_sync WHERE owner_id = $1 AND client_id = $2",
       [ownerId, clientId],
     );
     const r = rows[0];
-    return r ? { ownerId, clientId, interviewId: r.interview_id, revision: r.revision, contentHash: r.content_hash } : undefined;
+    return r ? { ownerId, clientId, interviewId: r.interview_id, revision: r.revision, contentHash: r.content_hash, requestHash: r.request_hash ?? undefined } : undefined;
   }
 
   async saveOfflineLink(l: OfflineLink) {
-    await this.pool.query(
-      `INSERT INTO offline_sync (owner_id, client_id, interview_id, revision, content_hash, updated_at)
-       VALUES ($1, $2, $3, $4, $5, now())
-       ON CONFLICT (owner_id, client_id) DO UPDATE SET interview_id = $3, revision = $4, content_hash = $5, updated_at = now()
+    await this.db.query(
+      `INSERT INTO offline_sync (owner_id, client_id, interview_id, revision, content_hash, request_hash, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now())
+       ON CONFLICT (owner_id, client_id) DO UPDATE SET interview_id = $3, revision = $4, content_hash = $5, request_hash = $6, updated_at = now()
        WHERE offline_sync.owner_id = $1`,
-      [l.ownerId, l.clientId, l.interviewId, l.revision, l.contentHash],
+      [l.ownerId, l.clientId, l.interviewId, l.revision, l.contentHash, l.requestHash ?? null],
     );
   }
 
   async getActivity(sessionId: string) {
-    const { rows } = await this.pool.query("SELECT last_seen FROM session_activity WHERE session_id = $1", [sessionId]);
+    const { rows } = await this.db.query("SELECT last_seen FROM session_activity WHERE session_id = $1", [sessionId]);
     return rows[0] ? ms(rows[0].last_seen)! : undefined;
   }
 
   async touchActivity(sessionId: string, at: number) {
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO session_activity (session_id, last_seen) VALUES ($1, to_timestamp($2 / 1000.0))
        ON CONFLICT (session_id) DO UPDATE SET last_seen = to_timestamp($2 / 1000.0)`,
       [sessionId, at],
@@ -319,12 +342,12 @@ export class PgStore implements Store {
   }
 
   async deleteActivity(sessionId: string) {
-    await this.pool.query("DELETE FROM session_activity WHERE session_id = $1", [sessionId]);
+    await this.db.query("DELETE FROM session_activity WHERE session_id = $1", [sessionId]);
   }
 
   async sweep(now: number) {
     // Solo con política explícita del profesional (history_retention_days no nulo).
-    const { rows } = await this.pool.query(
+    const { rows } = await this.db.query(
       `DELETE FROM interviews i USING (
          SELECT i2.id FROM interviews i2
            JOIN professional_settings s ON s.user_id = i2.owner_id
@@ -335,8 +358,8 @@ export class PgStore implements Store {
       [now],
     );
     // Importaciones vencidas y archivos que ya nadie usa.
-    await this.pool.query("DELETE FROM pending_imports WHERE expires_at < to_timestamp($1 / 1000.0)", [now]);
-    await this.pool.query(
+    await this.db.query("DELETE FROM pending_imports WHERE expires_at < to_timestamp($1 / 1000.0)", [now]);
+    await this.db.query(
       `DELETE FROM files f
         WHERE NOT EXISTS (SELECT 1 FROM pending_imports p WHERE p.file_id = f.id)
           AND NOT EXISTS (SELECT 1 FROM templates t WHERE t.source->>'fileId' = f.id)
@@ -344,7 +367,7 @@ export class PgStore implements Store {
           AND f.created_at < to_timestamp($1 / 1000.0) - interval '2 hours'`,
       [now],
     );
-    await this.pool.query("DELETE FROM session_activity WHERE last_seen < to_timestamp($1 / 1000.0) - interval '2 days'", [now]);
+    await this.db.query("DELETE FROM session_activity WHERE last_seen < to_timestamp($1 / 1000.0) - interval '2 days'", [now]);
     return rows.map((r) => r.id as string);
   }
 

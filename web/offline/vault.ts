@@ -46,13 +46,20 @@ export interface RecordRow extends Sealed {
 /** Almacenamiento subyacente (IndexedDB en el navegador; memoria en pruebas). */
 export interface Backend {
   listSpaces(): Promise<SpaceMeta[]>;
-  putSpace(s: SpaceMeta): Promise<void>;
+  createSpace(s: SpaceMeta, profile: RecordRow): Promise<boolean>;
+  touchSpace(spaceId: string, at: number): Promise<SpaceMeta | undefined>;
   /** Elimina el espacio y todos sus registros. */
   deleteSpace(spaceId: string): Promise<void>;
   listRecords(spaceId: string): Promise<RecordRow[]>;
   getRecord(spaceId: string, id: string): Promise<RecordRow | undefined>;
-  putRecord(r: RecordRow): Promise<void>;
+  putRecord(r: RecordRow, expected?: RecordRow): Promise<boolean>;
   deleteRecord(spaceId: string, id: string): Promise<void>;
+}
+
+/** El IV cambia en cada cifrado y permite comparar el registro sin descifrarlo. */
+export function sameRecord(current: RecordRow | undefined, expected: RecordRow) {
+  return current !== undefined && current.iv.length === expected.iv.length &&
+    current.iv.every((byte, index) => byte === expected.iv[index]);
 }
 
 export interface OfflineProfile {
@@ -151,10 +158,10 @@ export class OfflineVault {
       v: 1,
     };
     const profile: OfflineProfile = { professional: pkg.professional, templates: pkg.templates, idleMinutes };
-    await b.putSpace(space);
-    const v = new OfflineVault(b, space, key, profile);
-    await v.write(PROFILE, profile);
-    return v;
+    const sealed = await seal(key, aad(space.spaceId, PROFILE), profile);
+    if (isExpired(space) || !(await b.createSpace(space, { spaceId: space.spaceId, id: PROFILE, ...sealed })))
+      throw new Error("El período terminó o el dispositivo ya está preparado. Vuelve a abrir el modo sin conexión.");
+    return new OfflineVault(b, space, key, profile);
   }
 
   /** Abre el espacio con la frase. Local: no contacta al servidor. */
@@ -191,17 +198,22 @@ export class OfflineVault {
     return this.key;
   }
 
-  private async write(id: string, value: unknown) {
+  private async write(id: string, value: unknown, expected?: RecordRow) {
     const s = await seal(this.requireKey(), aad(this.space.spaceId, id), value);
-    await this.b.putRecord({ spaceId: this.space.spaceId, id, ...s });
+    this.requireKey();
+    const saved = await this.b.putRecord({ spaceId: this.space.spaceId, id, ...s }, expected);
+    if (!saved && !expected) throw new Error("El espacio local venció o se eliminó.");
+    return saved;
   }
 
   private async touch() {
-    const t = this.now();
-    if (t > this.space.lastSeenAt) {
-      this.space = { ...this.space, lastSeenAt: t };
-      await this.b.putSpace(this.space);
+    this.requireKey();
+    const current = await this.b.touchSpace(this.space.spaceId, this.now());
+    if (!current || isExpired(current)) {
+      this.lock();
+      throw new Error("El espacio local venció o se eliminó.");
     }
+    this.space = current;
   }
 
   async updateTemplates(pkg: OfflinePackage) {
@@ -214,12 +226,20 @@ export class OfflineVault {
     const key = this.requireKey();
     const rows = (await this.b.listRecords(this.space.spaceId)).filter((r) => r.id.startsWith("borrador:"));
     const out = await Promise.all(rows.map((r) => unseal<LocalDraft>(key, aad(this.space.spaceId, r.id), r)));
+    this.requireKey();
     return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
-  async draft(id: string): Promise<LocalDraft | undefined> {
+  private async readDraft(id: string) {
     const row = await this.b.getRecord(this.space.spaceId, draftKey(id));
-    return row ? unseal<LocalDraft>(this.requireKey(), aad(this.space.spaceId, row.id), row) : undefined;
+    if (!row) return undefined;
+    const draft = await unseal<LocalDraft>(this.requireKey(), aad(this.space.spaceId, row.id), row);
+    this.requireKey();
+    return { row, draft };
+  }
+
+  async draft(id: string): Promise<LocalDraft | undefined> {
+    return (await this.readDraft(id))?.draft;
   }
 
   async newDraft(templateId: string): Promise<LocalDraft> {
@@ -258,8 +278,9 @@ export class OfflineVault {
    * si otra pestaña guardó antes, se rechaza en vez de pisar su cambio.
    */
   async saveFields(id: string, fields: Record<string, string>, baseRevision: number): Promise<LocalDraft> {
-    const cur = await this.draft(id);
-    if (!cur) throw new Error("El borrador ya no existe en este dispositivo.");
+    const current = await this.readDraft(id);
+    if (!current) throw new Error("El borrador ya no existe en este dispositivo.");
+    const { draft: cur, row } = current;
     if (cur.stub) throw new Error("Este borrador ya se sincronizó: edítalo en Mis anamnesis.");
     if (cur.revision !== baseRevision) throw new StaleDraftError(cur);
     for (const v of Object.values(fields))
@@ -271,7 +292,11 @@ export class OfflineVault {
       updatedAt: new Date(this.now()).toISOString(),
       error: null,
     };
-    await this.write(draftKey(id), next);
+    if (!(await this.write(draftKey(id), next, row))) {
+      const latest = await this.draft(id);
+      if (latest) throw new StaleDraftError(latest);
+      throw new Error("El borrador ya no existe en este dispositivo.");
+    }
     await this.touch();
     return next;
   }
@@ -332,37 +357,36 @@ export class OfflineVault {
         summary.offline = true; // sin conexión: sigue «Pendiente de sincronizar»
         break;
       }
-      const cur = await this.draft(d.id);
-      if (!cur) continue;
-      if (r.ok) {
-        const ok = r.body as OfflineSyncResponse;
-        // Si se editó mientras se enviaba, queda pendiente la revisión nueva.
-        const done = cur.revision === sent;
-        await this.write(draftKey(d.id), {
-          ...cur,
-          interviewId: ok.interviewId,
-          syncedRevision: sent,
-          error: null,
-          conflict: null,
-          ...(done ? { fields: {}, stub: true } : {}),
-        } satisfies LocalDraft);
-        summary.synced++;
-      } else if (r.status === 409 && r.body.error === "conflicto_sincronizacion") {
-        await this.write(draftKey(d.id), {
-          ...cur,
-          error: r.body.message ?? "Conflicto de sincronización.",
-          conflict: {
-            reason: r.body.reason as OfflineConflictReason,
-            interviewId: String(r.body.interviewId ?? ""),
-            message: r.body.message ?? "",
-          },
-        } satisfies LocalDraft);
-        summary.failed++;
-      } else {
-        await this.write(draftKey(d.id), { ...cur, error: r.body.message ?? "No se pudo sincronizar." } satisfies LocalDraft);
-        summary.failed++;
-        if (r.status === 401) break;
+      // Una respuesta de red puede coincidir con una edición o el borrado
+      // de otra pestaña. Solo se escribe sobre el registro que se acaba de leer.
+      while (true) {
+        const current = await this.readDraft(d.id);
+        if (!current || current.draft.syncedRevision >= sent || current.draft.conflict) break;
+        const { draft: cur, row } = current;
+        let next: LocalDraft;
+        if (r.ok) {
+          const ok = r.body as OfflineSyncResponse;
+          const done = cur.revision === sent;
+          next = {
+            ...cur, interviewId: ok.interviewId, syncedRevision: sent, error: null, conflict: null,
+            ...(done ? { fields: {}, stub: true } : {}),
+          };
+        } else {
+          next = { ...cur, error: r.body.message ?? "No se pudo sincronizar." };
+          if (r.status === 409 && r.body.error === "conflicto_sincronizacion") {
+            next.conflict = {
+              reason: r.body.reason as OfflineConflictReason,
+              interviewId: String(r.body.interviewId ?? ""),
+              message: r.body.message ?? "",
+            };
+          }
+        }
+        if (!(await this.write(draftKey(d.id), next, row))) continue;
+        if (r.ok) summary.synced++;
+        else summary.failed++;
+        break;
       }
+      if (r.status === 401) break;
     }
     return summary;
   }
@@ -394,8 +418,17 @@ export class MemoryBackend implements Backend {
   async listSpaces() {
     return [...this.spaces.values()].map((s) => structuredClone(s));
   }
-  async putSpace(s: SpaceMeta) {
+  async createSpace(s: SpaceMeta, profile: RecordRow) {
+    if ([...this.spaces.values()].some((space) => space.ownerTag === s.ownerTag)) return false;
     this.spaces.set(s.spaceId, structuredClone(s));
+    this.records.set(`${s.spaceId}/${profile.id}`, structuredClone(profile));
+    return true;
+  }
+  async touchSpace(id: string, at: number) {
+    const s = this.spaces.get(id);
+    if (!s) return undefined;
+    s.lastSeenAt = Math.max(s.lastSeenAt, at);
+    return structuredClone(s);
   }
   async deleteSpace(id: string) {
     this.spaces.delete(id);
@@ -408,8 +441,12 @@ export class MemoryBackend implements Backend {
     const r = this.records.get(`${spaceId}/${id}`);
     return r ? structuredClone(r) : undefined;
   }
-  async putRecord(r: RecordRow) {
-    this.records.set(`${r.spaceId}/${r.id}`, structuredClone(r));
+  async putRecord(r: RecordRow, expected?: RecordRow) {
+    const key = `${r.spaceId}/${r.id}`;
+    const space = this.spaces.get(r.spaceId);
+    if (!space || isExpired(space) || (expected && !sameRecord(this.records.get(key), expected))) return false;
+    this.records.set(key, structuredClone(r));
+    return true;
   }
   async deleteRecord(spaceId: string, id: string) {
     this.records.delete(`${spaceId}/${id}`);

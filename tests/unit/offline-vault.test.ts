@@ -121,6 +121,32 @@ describe("borradores cifrados en el dispositivo", () => {
     await assert.rejects(v.saveFields(d.id, { motivo: "DEMO pestaña 1" }, d.revision), StaleDraftError);
     assert.equal((await v.draft(d.id))!.fields.motivo, "DEMO pestaña 2");
   });
+  it("dos guardados simultáneos sobre la misma revisión tienen un solo ganador", async () => {
+    const b = new MemoryBackend();
+    const v = await OfflineVault.prepare(b, pkg(), PASS, 15, ITER);
+    const d = await v.newDraft("generica");
+    const other = await OfflineVault.unlock(b, (await spaceFor(b, "demo-a"))!, PASS);
+    const results = await Promise.allSettled([
+      v.saveFields(d.id, { motivo: "DEMO pestaña 1" }, d.revision),
+      other.saveFields(d.id, { motivo: "DEMO pestaña 2" }, d.revision),
+    ]);
+    const accepted = results.find((r) => r.status === "fulfilled");
+    const rejected = results.find((r) => r.status === "rejected");
+    assert.ok(accepted);
+    assert.ok(rejected?.reason instanceof StaleDraftError);
+    assert.equal((await v.draft(d.id))?.fields.motivo, accepted.value.fields.motivo);
+  });
+
+  it("una pestaña con la clave abierta no recrea un espacio ya eliminado", async () => {
+    const b = new MemoryBackend();
+    const v = await OfflineVault.prepare(b, pkg(), PASS, 15, ITER);
+    const other = await OfflineVault.unlock(b, (await spaceFor(b, "demo-a"))!, PASS);
+    await v.destroy();
+    await assert.rejects(other.newDraft("generica"), /venció o se eliminó/);
+    assert.equal(b.spaces.size, 0);
+    assert.equal(b.records.size, 0);
+  });
+
 });
 
 describe("sincronización desde el dispositivo", () => {

@@ -25,7 +25,7 @@ import { HttpError } from "./http";
 import type { InterviewService } from "./interviews";
 import { logEvent } from "./log";
 import type { InterviewRecord, Store } from "./store";
-import type { TemplateService } from "./templates/service";
+import { TemplateService } from "./templates/service";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -132,7 +132,13 @@ export class OfflineSyncService {
   sync(ownerId: string, req: OfflineSyncRequest): Promise<OfflineSyncResponse> {
     const key = `${ownerId}:${req.clientId}`;
     const prev = this.locks.get(key) ?? Promise.resolve();
-    const next = prev.catch(() => undefined).then(() => this.apply(ownerId, req));
+    const next = prev.catch(() => undefined).then(async () => {
+      const result = await this.store.withOfflineSync(ownerId, req.clientId, (store) => this.apply(store, ownerId, req));
+      if (result.changed && result.previousHash)
+        this.interviews.publishOfflineUpdate(result.changed, (live) => contentHash(live) === result.previousHash);
+      logEvent("offline_sync", { result: result.outcome });
+      return result.response;
+    });
     this.locks.set(key, next);
     void next.finally(() => {
       if (this.locks.get(key) === next) this.locks.delete(key);
@@ -140,37 +146,61 @@ export class OfflineSyncService {
     return next;
   }
 
-  private async apply(ownerId: string, req: OfflineSyncRequest): Promise<OfflineSyncResponse> {
-    const link = await this.store.getOfflineLink(ownerId, req.clientId);
+  private async apply(store: Store, ownerId: string, req: OfflineSyncRequest): Promise<{
+    response: OfflineSyncResponse;
+    outcome: string;
+    changed?: InterviewRecord;
+    previousHash?: string;
+  }> {
+    const link = await store.getOfflineLink(ownerId, req.clientId);
+    const current = link ? await store.getInterview(ownerId, link.interviewId) : undefined;
+    if (link && !current) throw new OfflineConflict("eliminada_en_servidor", link.interviewId);
+    const requestHash = createHash("sha256").update(canonical(req)).digest("hex");
     if (link && req.revision <= link.revision) {
-      // Reintento (p. ej., se perdió la respuesta): sin efectos.
-      logEvent("offline_sync", { result: "duplicado" });
-      return { status: "sincronizado", interviewId: link.interviewId, revision: link.revision, duplicate: true };
+      if (req.revision === link.revision && link.requestHash && requestHash !== link.requestHash)
+        throw new OfflineConflict("revision_distinta", link.interviewId);
+      return {
+        outcome: "duplicado",
+        response: { status: "sincronizado", interviewId: link.interviewId, revision: link.revision, duplicate: true },
+      };
     }
-    const template = await this.templates.resolveVersion(ownerId, req.templateId, req.templateVersion);
+    const template = await new TemplateService(store).resolveVersion(ownerId, req.templateId, req.templateVersion);
     const prof = toProf(template, req.fields);
 
     let rec: InterviewRecord;
     if (!link) {
       const created = Math.min(Date.parse(req.createdAt), Date.now());
-      rec = await this.interviews.createManual(ownerId, template, prof, created);
+      const when = new Intl.DateTimeFormat("es-CL", {
+        timeZone: "America/Santiago", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+      }).format(new Date(created));
+      rec = await store.createInterview(ownerId, template, `Anamnesis sin conexión, ${when}`);
+      rec.status = "detenida";
     } else {
-      const cur = await this.interviews.find(ownerId, link.interviewId);
-      if (!cur) throw new OfflineConflict("eliminada_en_servidor", link.interviewId);
-      if (cur.status === "finalizada") throw new OfflineConflict("finalizada", link.interviewId);
-      if (contentHash(cur) !== link.contentHash) throw new OfflineConflict("modificada_en_servidor", link.interviewId);
-      if (cur.template.id !== template.id || cur.template.version !== template.version)
+      rec = current!;
+      const live = this.interviews.liveRecord(rec.id);
+      if (rec.status === "finalizada" || live?.status === "finalizada")
+        throw new OfflineConflict("finalizada", link.interviewId);
+      if (contentHash(rec) !== link.contentHash || (live && contentHash(live) !== link.contentHash))
+        throw new OfflineConflict("modificada_en_servidor", link.interviewId);
+      if (rec.template.id !== template.id || rec.template.version !== template.version)
         throw new HttpError(400, "plantilla_distinta", "El borrador no puede cambiar de plantilla después de sincronizarse.");
-      rec = await this.interviews.replaceManual(cur, prof);
     }
-    await this.store.saveOfflineLink({
+    rec.prof = prof;
+    rec.lastActivity = Date.now();
+    if (!(await store.saveInterview(rec))) throw new OfflineConflict("eliminada_en_servidor", rec.id);
+    await store.saveOfflineLink({
       ownerId,
       clientId: req.clientId,
       interviewId: rec.id,
       revision: req.revision,
       contentHash: contentHash(rec),
+      requestHash,
     });
-    logEvent("offline_sync", { result: link ? "actualizado" : "creado" });
-    return { status: "sincronizado", interviewId: rec.id, revision: req.revision, duplicate: false };
+    return {
+      outcome: link ? "actualizado" : "creado",
+      response: { status: "sincronizado", interviewId: rec.id, revision: req.revision, duplicate: false },
+      changed: rec,
+      previousHash: link?.contentHash,
+    };
   }
 }

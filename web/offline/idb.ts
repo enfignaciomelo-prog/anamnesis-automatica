@@ -3,7 +3,7 @@
  * la limpieza de sesión conserva (hasta el corte diario); su contenido está
  * cifrado (ver vault.ts).
  */
-import type { Backend, RecordRow, SpaceMeta } from "./vault";
+import { isExpired, sameRecord, type Backend, type RecordRow, type SpaceMeta } from "./vault";
 
 export const OFFLINE_DB = "aa-offline";
 const VERSION = 1;
@@ -43,8 +43,8 @@ async function withStore<T>(names: string[], mode: IDBTransactionMode, f: (t: ID
   const db = await open();
   try {
     const t = db.transaction(names, mode);
-    const out = await f(t);
-    await done(t);
+    const completion = done(t);
+    const [out] = await Promise.all([f(t), completion]);
     return out;
   } finally {
     db.close();
@@ -62,8 +62,27 @@ export class IdbBackend implements Backend {
     if (!(await exists())) return [];
     return withStore(["spaces"], "readonly", (t) => req(t.objectStore("spaces").getAll() as IDBRequest<SpaceMeta[]>));
   }
-  async putSpace(s: SpaceMeta) {
-    await withStore(["spaces"], "readwrite", (t) => void t.objectStore("spaces").put(s));
+  async createSpace(s: SpaceMeta, profile: RecordRow) {
+    return withStore(["spaces", "records"], "readwrite", async (t) => {
+      const spaces = t.objectStore("spaces");
+      const existing = await req<SpaceMeta[]>(spaces.getAll());
+      if (existing.some((space) => space.ownerTag === s.ownerTag)) return false;
+      spaces.add(s);
+      t.objectStore("records").add(profile);
+      return true;
+    });
+  }
+  async touchSpace(spaceId: string, at: number) {
+    return withStore(["spaces"], "readwrite", async (t) => {
+      const spaces = t.objectStore("spaces");
+      const s = await req<SpaceMeta | undefined>(spaces.get(spaceId));
+      if (!s) return undefined;
+      if (at > s.lastSeenAt) {
+        s.lastSeenAt = at;
+        spaces.put(s);
+      }
+      return s;
+    });
   }
   async deleteSpace(spaceId: string) {
     await withStore(["spaces", "records"], "readwrite", async (t) => {
@@ -72,8 +91,6 @@ export class IdbBackend implements Backend {
       const keys = await req(recs.index("bySpace").getAllKeys(spaceId));
       for (const k of keys) recs.delete(k);
     });
-    // Sin espacios: se elimina la base completa.
-    if ((await this.listSpaces()).length === 0) await deleteOfflineDb();
   }
   async listRecords(spaceId: string): Promise<RecordRow[]> {
     return withStore(["records"], "readonly", (t) =>
@@ -85,17 +102,17 @@ export class IdbBackend implements Backend {
       req(t.objectStore("records").get([spaceId, id]) as IDBRequest<RecordRow | undefined>),
     );
   }
-  async putRecord(r: RecordRow) {
-    await withStore(["records"], "readwrite", (t) => void t.objectStore("records").put(r));
+  async putRecord(r: RecordRow, expected?: RecordRow) {
+    return withStore(["spaces", "records"], "readwrite", async (t) => {
+      const space = await req<SpaceMeta | undefined>(t.objectStore("spaces").get(r.spaceId));
+      if (!space || isExpired(space)) return false;
+      const records = t.objectStore("records");
+      if (expected && !sameRecord(await req(records.get([r.spaceId, r.id])), expected)) return false;
+      records.put(r);
+      return true;
+    });
   }
   async deleteRecord(spaceId: string, id: string) {
     await withStore(["records"], "readwrite", (t) => void t.objectStore("records").delete([spaceId, id]));
   }
-}
-
-export function deleteOfflineDb() {
-  return new Promise<void>((resolve) => {
-    const r = indexedDB.deleteDatabase(OFFLINE_DB);
-    r.onsuccess = r.onerror = r.onblocked = () => resolve();
-  });
 }

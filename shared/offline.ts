@@ -54,11 +54,12 @@ export interface OfflineSyncResponse {
   duplicate: boolean;
 }
 
-export type OfflineConflictReason = "modificada_en_servidor" | "eliminada_en_servidor" | "finalizada";
+export type OfflineConflictReason = "modificada_en_servidor" | "eliminada_en_servidor" | "finalizada" | "revision_distinta";
 
 export const CONFLICT_TEXT: Record<OfflineConflictReason, string> = {
   modificada_en_servidor:
     "La anamnesis se modificó en tu cuenta después de la última sincronización. No se sobrescribió nada.",
   eliminada_en_servidor: "La anamnesis se eliminó de tu cuenta después de sincronizarla. No se volvió a crear.",
+  revision_distinta: "Ya se sincronizó otra versión con el mismo número de revisión.",
   finalizada: "La anamnesis ya fue finalizada en tu cuenta. No se sobrescribió nada.",
 };

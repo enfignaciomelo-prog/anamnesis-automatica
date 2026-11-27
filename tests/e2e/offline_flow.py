@@ -177,10 +177,10 @@ def main() -> int:
         pg2.get_by_role("textbox", name="Motivo de consulta").fill("DEMO borrador que vence en el corte")
         expect(pg2.get_by_text("Guardado en este dispositivo", exact=False)).to_be_visible(timeout=5000)
         assert pg2.evaluate(RAW_IDB)["spaces"] == 1
-        pg2.wait_for_function("""async () => {
-          const dbs = indexedDB.databases ? await indexedDB.databases() : [];
-          return !dbs.some(d => d.name === 'aa-offline');
-        }""", timeout=30000, polling=500)
+        pg2.wait_for_function(
+            f"async () => {{ const {{ spaces, records }} = await ({RAW_IDB})(); return spaces === 0 && records === 0; }}",
+            timeout=30000, polling=500,
+        )
         assert "DEMO borrador que vence" not in pg2.evaluate("document.body.innerText")
         shot(pg2, "44-offline-corte")
         pg2.context.set_offline(False)
