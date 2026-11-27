@@ -50,6 +50,8 @@ jobs:
         run: npm run test:e2e
         env:
           SHOTS_DIR: e2e-capturas
+      - name: Micrófono en Chromium con proveedor local
+        run: npm run test:e2e:voz
       - name: Guardar capturas
         if: always()
         uses: actions/upload-artifact@v4

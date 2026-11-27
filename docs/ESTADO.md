@@ -1,8 +1,8 @@
 # Estado de Anamnesis Automática
 
-Última actualización: modo sin conexión manual cifrado y sincronización, 27-11-2026.
+Última actualización: captura de micrófono y transcripción Deepgram, 27-11-2026.
 
-Orden vigente (decisión del responsable): 1) cuentas y persistencia ✅, 2) vencimiento diario y limpieza local ✅, 3) modo offline cifrado y sincronización ✅, 4) micrófono y transcripción ⏳, 5) llenado con Claude ⏳. Voz e IA offline: capacidad posterior por evaluar.
+Orden vigente (decisión del responsable): 1) cuentas y persistencia ✅, 2) vencimiento diario y limpieza local ✅, 3) modo offline cifrado y sincronización ✅, 4) micrófono y transcripción ✅ código / ⚠️ proveedor, 5) llenado con Claude ⏳. Voz e IA offline: capacidad posterior por evaluar.
 
 **Leyenda:** ✅ Real (funciona de verdad) · 🧪 Simulado (funciona con datos o
 lógica de demostración) · ⏳ Pendiente (no existe aún)
@@ -12,13 +12,13 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Función | Estado | Detalle |
 |---|---|---|
 | Consentimiento antes de escuchar | ✅ | El servidor rechaza iniciar sin consentimiento registrado (quién y cuándo). |
-| Iniciar, pausar, reanudar, detener | ✅ | Controles reales; la fuente de audio es simulada. |
+| Iniciar, pausar, reanudar, detener | ✅ | Controles reales. Con Deepgram, cada reanudación inicia una conexión y etiquetas de hablantes nuevas. |
 | Indicadores de escucha y conexión | ✅ | Escuchando/Pausada/Detenida; Conectado/Reconectando/Sin conexión. |
-| Micrófono | ⏳ | Etapa 3. Hoy no se activa. |
-| Transcripción | 🧪 | Guion ficticio emitido palabra por palabra por el servidor. Deepgram: etapa 3. |
+| Micrófono | ✅ código / ⚠️ Safari real | Captura PCM con consentimiento en modo cuentas cuando se habilita Deepgram. |
+| Transcripción | ✅ código / ⚠️ proveedor | Nova-3, español latinoamericano. El modo de demostración conserva el guion ficticio. |
 | Texto provisional separado del definitivo | ✅ | Eventos `interim` y segmentos definitivos distintos en la interfaz. |
 | Asignación de hablantes por el profesional | ✅ | La app no asume quién es el paciente; sin asignar, todo queda en revisión. |
-| Propuestas con fragmento de respaldo | 🧪 | Extractor de reglas (no IA). Respaldo literal real; tocarlo lleva al segmento. |
+| Propuestas con fragmento de respaldo | 🧪 | Extractor de reglas (no IA). En demo, tocar el respaldo lleva al fragmento. Con micrófono, el llenado es manual hasta integrar Claude. |
 | Clasificación actual / histórico / negado / familiar | 🧪 | Reglas sobre el texto. Claude: etapa 4. Funciona también en plantillas propias a través del tipo de dato de cada campo. |
 | No convertir lo no mencionado en negación | ✅ | Solo negaciones explícitas; probado. |
 | Contradicciones y autocorrecciones | 🧪 | Reglas (dosis, frecuencia, afirmación/negación, «perdón, mejor dicho»). |
@@ -75,7 +75,7 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Cookies | ✅ | HttpOnly, SameSite, Secure con HTTPS; verificación de origen en cambios. |
 | Sin datos clínicos en el navegador | ✅ (con una excepción) | Sin localStorage ni sessionStorage; caché solo pública; limpieza de versiones anteriores; `Clear-Site-Data: "cache"` al cerrar. **Excepción explícita:** los borradores manuales sin conexión, cifrados en IndexedDB hasta el corte diario (ver abajo). |
 | Eliminación del historial en el servidor | ✅ | **Desactivada por defecto**: las anamnesis guardadas, incluidas las finalizadas, no se eliminan automáticamente. Solo se activa si el profesional la configura y la confirma (30, 90 o 365 días sin actividad). Independiente de la limpieza local. Botón para eliminar una anamnesis. |
-| Audio no guardado | ✅ | No existe audio todavía; el diseño no lo almacena. |
+| Audio no guardado | ✅ | El audio se transmite y la aplicación conserva únicamente el texto transcrito. |
 | Sin contenido clínico en registros | ✅ | Probado. |
 | Explicación de datos por proveedor | ✅ | Incluye Supabase y Resend. |
 | No ejecutar macros ni instrucciones de archivos | ✅ | Ver plantillas. |
@@ -99,6 +99,7 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 - `npm test`: pruebas unitarias y de integración (extractor y casos clínicos pedidos, API, autorización,
   exportación, retención, registros, service worker, importación, versionado,
   exportación en formato original, macros, OCR).
+- `npm run test:e2e:voz`: captura PCM en Chromium con micrófono simulado y proveedor WebSocket local.
 - `npm run test:e2e`: flujos de demostración, plantillas y sesión con Playwright.
   **Emulación en Chromium** con tamaño de iPhone y computador; no son pruebas en Safari real.
 - Archivos de prueba ficticios en `tests/fixtures` (`npm run fixtures` los regenera).

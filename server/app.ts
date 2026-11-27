@@ -9,6 +9,7 @@
  * - Bloqueo por inactividad configurable por profesional.
  */
 import { createReadStream, existsSync, statSync } from "node:fs";
+import { MAX_AUDIO_BYTES, type ConnectDeepgram } from "./transcription/deepgram";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { nextDailyCutoff, zonedTimeToUtc } from "../shared/cutoff";
@@ -66,6 +67,7 @@ export interface App {
 export interface AppDeps {
   store?: Store;
   gate?: AuthGate;
+  connectDeepgram?: ConnectDeepgram;
   /** Reloj inyectable (solo pruebas). */
   now?: () => number;
 }
@@ -85,7 +87,7 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
       });
   };
   const gate = deps.gate ?? new DemoAuth(ensureProfessional, now);
-  const service = new InterviewService(store, config);
+  const service = new InterviewService(store, config, deps.connectDeepgram);
 
   // ---- Canales en vivo ligados a su sesión ----
   // El servidor los cierra por sí mismo al llegar el corte, al revocarse la
@@ -436,6 +438,20 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
           await service.subscribe(p.id, id, res);
           return;
         }
+        if (sub === "audio" && m === "POST") {
+          if (req.headers["content-type"] !== "application/octet-stream")
+            throw new HttpError(415, "tipo_audio", "Se esperaba audio PCM.");
+          const capture = url.searchParams.get("captura") ?? "";
+          const sequence = url.searchParams.get("secuencia") ?? "";
+          if (!/^[0-9a-f-]{36}$/i.test(capture) || !/^\d{1,9}$/.test(sequence))
+            throw new HttpError(400, "captura_invalida", "Los datos de la captura no son válidos.");
+          const pcm = await readRaw(req, MAX_AUDIO_BYTES);
+          if (pcm.length % 2) throw new HttpError(400, "audio_invalido", "El audio PCM no es válido.");
+          if (now() >= authed.cutoffAt || !(await gate.isActive(authed.session.sessionId)))
+            throw new HttpError(401, "sin_sesion", "Inicia sesión para continuar.");
+          await service.acceptAudio(p.id, id, authed.session.sessionId, capture, Number(sequence), pcm);
+          return sendJson(res, 200, { ok: true });
+        }
         if (m === "POST") {
           const body = await readJson(req);
           if (sub === "consent") return sendJson(res, 200, await service.consent(p.id, id, body.givenBy as "paciente"));
@@ -444,7 +460,12 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
             if (!["iniciar", "pausar", "reanudar", "detener"].includes(cmd))
               throw new HttpError(400, "comando_invalido", "Acción no válida.");
             const reason = typeof body.reason === "string" && /^[a-z_-]{1,30}$/.test(body.reason) ? body.reason : null;
-            return sendJson(res, 200, await service.command(p.id, id, cmd, reason, authed.session));
+            const capture = typeof body.captureId === "string" && /^[0-9a-f-]{36}$/i.test(body.captureId) &&
+              typeof body.sampleRate === "number" && Number.isInteger(body.sampleRate) && body.sampleRate >= 8000 && body.sampleRate <= 48000
+              ? { id: body.captureId, rate: body.sampleRate }
+              : undefined;
+            const requestedCaptureId = typeof body.captureId === "string" ? body.captureId : undefined;
+            return sendJson(res, 200, await service.command(p.id, id, cmd, reason, authed.session, capture, requestedCaptureId));
           }
           if (sub === "speakers")
             return sendJson(res, 200, await service.setRole(p.id, id, Number(body.speaker), body.role as SpeakerRole));

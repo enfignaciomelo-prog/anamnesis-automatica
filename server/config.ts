@@ -32,6 +32,7 @@ export interface Config {
   /** Reloj ajustable para pruebas E2E del corte diario (nunca en producción). */
   testClock: boolean;
   providers: { anthropic: boolean; deepgram: boolean; database: boolean };
+  deepgram?: { key: string };
   database?: { url: string; ssl: "disable" | "verify"; caCert?: string };
   auth?: { secret: string; baseUrl: string };
   email?: { transport: "resend" | "prueba"; resendKey?: string; from?: string };
@@ -45,6 +46,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   };
   const demo = env.DEMO_MODE !== "false";
   const production = env.NODE_ENV === "production";
+  const transcription = env.TRANSCRIPTION_MODE ?? "demo";
+  if (!["demo", "deepgram"].includes(transcription))
+    throw new Error("TRANSCRIPTION_MODE admite «demo» o «deepgram».");
+  const deepgramKey = env.DEEPGRAM_API_KEY?.trim();
+  if (transcription === "deepgram" && (demo || !deepgramKey))
+    throw new Error("Deepgram requiere DEMO_MODE=false y DEEPGRAM_API_KEY.");
   const base: Config = {
     port: Number(env.PORT ?? 3000),
     demo,
@@ -60,6 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionCheckMs: Math.max(100, Number(env.SESSION_CHECK_MS ?? 15_000)),
     testClock: env.ALLOW_TEST_CLOCK === "true" && !production && demo,
     providers,
+    ...(transcription === "deepgram" && deepgramKey ? { deepgram: { key: deepgramKey } } : {}),
   };
   if (demo) return base;
 
