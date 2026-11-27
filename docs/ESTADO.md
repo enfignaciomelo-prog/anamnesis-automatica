@@ -1,6 +1,6 @@
 # Estado de Anamnesis Automática
 
-Última actualización: cuentas, persistencia y corte diario, 26-11-2026.
+Última actualización: auditoría de archivos Office y TLS de PostgreSQL, 27-11-2026.
 
 Orden vigente (decisión del responsable): 1) cuentas y persistencia ✅, 2) vencimiento diario y limpieza local ✅, 3) modo offline cifrado y sincronización ⏳, 4) micrófono y transcripción ⏳, 5) llenado con Claude ⏳. Voz e IA offline: capacidad posterior por evaluar.
 
@@ -42,11 +42,11 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Importar DOCX con vista previa y confirmación | ✅ | Marcadores de Word, líneas «Etiqueta:» o con «____», secciones por títulos. |
 | Importar XLSX con hoja y celda | ✅ | Etiquetas y nombres definidos; hoja y celda editables; celdas con fórmula no se pueden mapear. |
 | Importar PDF con texto | ✅ | Solo propone campos; la exportación usa el formato estándar. |
-| PDF escaneado: OCR y revisión manual | ✅ / ⚠️ | OCR en español con tesseract si el servidor lo tiene (incluido en el `Dockerfile`); los campos quedan marcados «Leído por OCR: revisar». Sin OCR (p. ej., Render con runtime Node), se piden los campos a mano. |
+| PDF escaneado: OCR y revisión manual | ✅ / ⚠️ | OCR en español si el servidor tiene tesseract con el idioma `spa` (incluido en el `Dockerfile`); los campos quedan marcados «Leído por OCR: revisar». Sin OCR (p. ej., Render con runtime Node), se piden los campos a mano. |
 | Exportar en el formato de la plantilla (Word) | ✅ | Llena una copia en marcadores o al final de la línea de la etiqueta. Marca «DATOS FICTICIOS» en modo demo. |
-| Exportar Excel de plantillas mapeadas | ✅ | Escribe solo en las celdas confirmadas, como texto; no toca fórmulas. |
+| Exportar Excel de plantillas mapeadas | ✅ | Escribe solo en las celdas confirmadas, como texto; no toca fórmulas. Si queda un destino sin completar en Word o Excel, bloquea la descarga del original. |
 | Conservación exacta del diseño | ❌ No se promete | Se avisa al importar y al exportar. |
-| Seguridad de archivos | ✅ | Máx. 5 MB; rechaza macros (.docm, .xlsm o `vbaProject.bin` aunque se renombre), formatos antiguos y extensiones que no coinciden; límites de descompresión; nunca se ejecutan macros, fórmulas ni scripts; el texto de los archivos se trata solo como datos. |
+| Seguridad de archivos | ✅ | Máx. 5 MB; rechaza macros (.docm, .xlsm o `vbaProject.bin` aunque se renombre), formatos antiguos y extensiones que no coinciden; límite de partes y tamaño declarado antes de descomprimir, tamaño real e integridad verificados durante la lectura; nunca se ejecutan macros, fórmulas ni scripts; el texto de los archivos se trata solo como datos. |
 | Separación entre profesionales | ✅ | Plantillas y archivos originales accesibles solo por su dueño (probado). |
 | Persistencia de plantillas | 🧪 | En memoria, como el resto de la demo (PostgreSQL: etapa 5). |
 
@@ -71,7 +71,7 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Escucha ligada a su sesión | ✅ | La escucha pertenece a la sesión que la inició o reanudó. Cerrar una sesión observadora no la detiene; revocar, vencer o cerrar la sesión dueña sí la pausa, aunque no tenga pantalla conectada (probado con dos dispositivos de la misma cuenta). |
 | Cierre manual y entre pestañas | ✅ | Propagado a otras pestañas; cancela peticiones; una respuesta tardía no repuebla datos; «Atrás» no muestra contenido clínico (E2E). |
 | Canales en vivo ligados a su sesión | ✅ | El servidor cierra cada canal al llegar el corte (temporizador del servidor), si la sesión se revoca por otra vía (p. ej., cambio de contraseña) o por inactividad, sin esperar otra petición. Cerrar sesión en un dispositivo no cierra los de otro (probado en memoria y PostgreSQL). |
-| TLS con PostgreSQL | ✅ | En producción: TLS obligatorio con verificación del certificado (`DATABASE_CA_CERT`); se rechazan `DATABASE_SSL=disable`, `sslmode` que no verifica y cualquier `rejectUnauthorized:false`. Sin TLS solo para PostgreSQL local de pruebas. |
+| TLS con PostgreSQL | ✅ | En producción: TLS obligatorio con verificación del certificado (raíces de Node o `DATABASE_CA_CERT`); se rechazan `DATABASE_SSL=disable`, `sslmode` que no verifica y cualquier `rejectUnauthorized:false`. Sin TLS solo para PostgreSQL local de pruebas. |
 | Cookies | ✅ | HttpOnly, SameSite, Secure con HTTPS; verificación de origen en cambios. |
 | Sin datos clínicos en el navegador | ✅ | Sin localStorage, sessionStorage ni IndexedDB; caché solo pública; limpieza de versiones anteriores; `Clear-Site-Data` al cerrar. |
 | Eliminación del historial en el servidor | ✅ | **Desactivada por defecto**: las anamnesis guardadas, incluidas las finalizadas, no se eliminan automáticamente. Solo se activa si el profesional la configura y la confirma (30, 90 o 365 días sin actividad). Independiente de la limpieza local. Botón para eliminar una anamnesis. |

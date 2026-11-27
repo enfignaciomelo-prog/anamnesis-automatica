@@ -114,6 +114,17 @@ describe("importación segura", () => {
     assert.equal(r.status, 400);
   });
 
+  it("rechaza paquetes con demasiadas partes", async () => {
+    const c = await login("demo-a");
+    const zip = new JSZip();
+    zip.file("word/document.xml", "<w:document/>", { createFolders: false });
+    for (let i = 0; i < 1500; i++) zip.file(`parte-${i}.xml`, "<parte/>");
+    const bytes = await zip.generateAsync({ type: "nodebuffer" });
+    const r = await c.upload("muchas-partes.docx", bytes);
+    assert.equal(r.status, 422);
+    assert.equal(r.body.error, "archivo_complejo");
+  });
+
   it("rechaza archivos de más de 5 MB", async () => {
     const c = await login("demo-a");
     const big = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(5 * 1024 * 1024 + 10)]);
@@ -190,6 +201,29 @@ describe("Word con marcadores y etiquetas", () => {
     assert.match(xml, /DATOS FICTICIOS/);
     assert.match(xml, /texto del profesional/);
     assert.match(xml, /\[DEMO\] Refiere «Vengo porque/);
+  });
+
+  it("bloquea el formato original si un destino guardado no existe", async () => {
+    const { body: session } = await c.json<{ professional: { id: string } }>("GET", "/api/session");
+    const { body: snap } = await c.json<InterviewSnapshot>("POST", "/api/interviews", { templateId: tpl.id });
+    const saved = await app.store.getInterview(session.professional.id, snap.id);
+    assert.ok(saved);
+    const field = saved.template.sections.flatMap((section) => section.fields).find((f) => f.target);
+    assert.ok(field);
+    field.target = { kind: "bookmark", name: "marcador_inexistente" };
+    saved.status = "finalizada";
+    await app.store.saveInterview(saved);
+
+    const path = `/api/interviews/${snap.id}/export?format=`;
+    const original = await c.req("GET", path + "original");
+    assert.equal(original.status, 409);
+    assert.equal(original.headers.get("content-disposition"), null);
+    const error = await original.json();
+    assert.equal(error.error, "exportacion_incompleta");
+    assert.match(error.message, /formato estándar/);
+    const standard = await c.req("GET", path + "docx");
+    assert.equal(standard.status, 200);
+    await standard.arrayBuffer();
   });
 
   it("versiona: la entrevista anterior conserva su versión", async () => {

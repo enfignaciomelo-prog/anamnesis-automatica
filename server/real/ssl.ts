@@ -2,7 +2,7 @@
  * Opciones TLS para PostgreSQL. Nunca se usa rejectUnauthorized:false.
  *
  * - Producción: TLS obligatorio con verificación del certificado del servidor
- *   contra DATABASE_CA_CERT (certificado de Supabase). Se rechaza DATABASE_SSL=disable.
+ *   con las raíces de Node o la CA de DATABASE_CA_CERT. Se rechaza DATABASE_SSL=disable.
  * - Fuera de producción (CI y desarrollo local): se permite desactivar TLS para
  *   un PostgreSQL local; si se usa TLS, siempre se verifica.
  *
@@ -29,6 +29,6 @@ export function stripSslParams(raw: string): { url: string; removed: string[] } 
 export function pgTlsOptions(db: DbTlsInput): { connectionString: string; ssl: false | ConnectionOptions } {
   const { url } = stripSslParams(db.url);
   if (db.ssl === "disable") return { connectionString: url, ssl: false };
-  // Verificación siempre activa: con el CA indicado, o con las raíces del sistema.
+  // Verificación siempre activa: con la CA indicada o las raíces de confianza de Node.
   return { connectionString: url, ssl: db.caCert ? { ca: db.caCert, rejectUnauthorized: true } : { rejectUnauthorized: true } };
 }

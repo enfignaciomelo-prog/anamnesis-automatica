@@ -37,8 +37,9 @@ describe("TLS de PostgreSQL", () => {
   it("en producción rechaza DATABASE_SSL=disable", () => {
     assert.throws(() => loadConfig({ ...real, ...prod, DATABASE_SSL: "disable" }), /DATABASE_SSL=disable/);
   });
-  it("en producción exige el certificado del proveedor (sin alternativa sin verificar)", () => {
-    assert.throws(() => loadConfig({ ...real, ...prod, DATABASE_CA_CERT: "" }), /DATABASE_CA_CERT/);
+  it("usa las raíces de Node si no se configura una CA y valida el formato de la CA explícita", () => {
+    const config = loadConfig({ ...real, ...prod, DATABASE_CA_CERT: "" });
+    assert.deepEqual(pgTlsOptions(config.database!).ssl, { rejectUnauthorized: true });
     assert.throws(() => loadConfig({ ...real, ...prod, DATABASE_CA_CERT: "no es pem" }), /PEM/);
   });
   it("en producción rechaza sslmode que no verifica en la URL", () => {
@@ -48,6 +49,11 @@ describe("TLS de PostgreSQL", () => {
         /sslmode/,
         mode,
       );
+  });
+  it("rechaza parámetros que desactivan TLS incluso si se repiten", () => {
+    for (const query of ["ssl=0", "ssl=false", "sslmode=verify-full&sslmode=disable"]) {
+      assert.throws(() => loadConfig({ ...real, ...prod, DATABASE_URL: `${real.DATABASE_URL}?${query}` }), /TLS verificado/);
+    }
   });
   it("nunca genera rejectUnauthorized:false y elimina parámetros ssl de la URL", () => {
     const withCa = pgTlsOptions({ url: "postgres://u:p@h:5432/d?sslmode=no-verify&sslrootcert=x", ssl: "verify", caCert: PEM });
