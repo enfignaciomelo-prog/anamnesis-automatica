@@ -6,7 +6,9 @@ import { BetterAuthGate, createBetterAuth, runAuthMigrations } from "./betterAut
 import { createPool, migrate } from "./db";
 import { PgStore } from "./pgStore";
 
-export async function setupReal(config: Config): Promise<Required<Pick<AppDeps, "store" | "gate">> & { mailer: Mailer }> {
+export async function setupReal(
+  config: Config,
+): Promise<Required<Pick<AppDeps, "store" | "gate">> & Pick<AppDeps, "fillProvider"> & { mailer: Mailer }> {
   const pool = createPool(config.database!);
   const mailer: Mailer =
     config.email!.transport === "prueba" ? new TestMailer() : new ResendMailer(config.email!.resendKey!, config.email!.from!);
@@ -14,5 +16,9 @@ export async function setupReal(config: Config): Promise<Required<Pick<AppDeps, 
   await migrate(pool, () => runAuthMigrations(auth));
   const store = new PgStore(pool, { idleMinutes: config.idleDefaultMinutes });
   const gate = new BetterAuthGate(auth, pool, mailer, !config.production);
-  return { store, gate, mailer };
+  // Llenado con Claude: solo con activación explícita (CLAUDE_FILL=true).
+  const fillProvider = config.claude
+    ? (await import("./anthropicFill")).createClaudeFill(config.claude, process.env.CLAUDE_FALLBACKS !== "false")
+    : undefined;
+  return { store, gate, mailer, fillProvider };
 }

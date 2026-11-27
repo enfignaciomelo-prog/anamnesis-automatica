@@ -20,18 +20,20 @@
     "test:e2e": "python3 .claude/skills/webapp-testing/scripts/with_server.py --server \"exec env DEMO_SPEED=20 ALLOW_TEST_CLOCK=true PORT=4173 node --import tsx server/index.ts\" --port 4173 -- python3 tests/e2e/run_all.py",
     "test:e2e:voz": "python3 .claude/skills/webapp-testing/scripts/with_server.py --server \"exec env PORT=4174 node --import tsx tests/e2e/voice_server.ts\" --port 4174 -- python3 tests/e2e/voice_flow.py",
     "fixtures": "python3 scripts/make-fixtures.py",
-    "typecheck:offline": "tsc -p tsconfig.offline.json --noEmit"
+    "typecheck:offline": "tsc -p tsconfig.offline.json --noEmit",
+    "test:e2e:claude": "python3 .claude/skills/webapp-testing/scripts/with_server.py --server \"exec env DEMO_SPEED=20 ALLOW_TEST_FILL=true PORT=4175 node --import tsx server/index.ts\" --port 4175 -- python3 tests/e2e/claude_fill_flow.py"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.137.0",
     "better-auth": "1.7.28",
     "docx": "9.8.1",
     "jszip": "3.10.1",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.2.108",
-    "ws": "8.23.1",
     "pg": "8.23.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "ws": "8.23.1",
     "zod": "3.25.76"
   },
   "devDependencies": {
