@@ -6,6 +6,8 @@ export class HttpError extends Error {
     public code: string,
     /** Mensaje para la persona usuaria; nunca contiene datos clínicos. */
     public userMessage: string,
+    /** Datos adicionales sin contenido clínico (p. ej., id de la anamnesis en conflicto). */
+    public extra?: Record<string, string>,
   ) {
     super(code);
     this.name = "HttpError";

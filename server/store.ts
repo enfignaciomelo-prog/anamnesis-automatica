@@ -78,6 +78,17 @@ export interface PendingImport {
   validTargets: Set<string>;
 }
 
+/** Vínculo de un borrador sin conexión con la anamnesis creada en el servidor. */
+export interface OfflineLink {
+  ownerId: string;
+  clientId: string;
+  interviewId: string;
+  /** Última revisión del dispositivo aplicada. */
+  revision: number;
+  /** Huella del contenido del servidor justo después de aplicarla (detecta cambios posteriores). */
+  contentHash: string;
+}
+
 export interface InterviewFilter {
   /** Fecha de creación desde/hasta (inclusive, ms). */
   from?: number;
@@ -112,6 +123,9 @@ export interface Store {
   getImport(ownerId: string, id: string): Promise<PendingImport | undefined>;
   deleteImport(ownerId: string, id: string): Promise<void>;
 
+  getOfflineLink(ownerId: string, clientId: string): Promise<OfflineLink | undefined>;
+  saveOfflineLink(link: OfflineLink): Promise<void>;
+
   /** Última actividad de una sesión (bloqueo por inactividad, exigido en servidor). */
   getActivity(sessionId: string): Promise<number | undefined>;
   touchActivity(sessionId: string, at: number): Promise<void>;
@@ -141,6 +155,7 @@ export class MemoryStore implements Store {
   private files = new Map<string, FileRecord>();
   private imports = new Map<string, PendingImport>();
   private activity = new Map<string, number>();
+  private offline = new Map<string, OfflineLink>();
 
   async getProfessional(id: string) {
     const p = this.professionals.get(id);
@@ -250,6 +265,14 @@ export class MemoryStore implements Store {
   async deleteImport(ownerId: string, id: string) {
     const r = this.imports.get(id);
     if (r && r.ownerId === ownerId) this.imports.delete(id);
+  }
+
+  async getOfflineLink(ownerId: string, clientId: string) {
+    const l = this.offline.get(`${ownerId}:${clientId}`);
+    return l ? { ...l } : undefined;
+  }
+  async saveOfflineLink(link: OfflineLink) {
+    this.offline.set(`${link.ownerId}:${link.clientId}`, { ...link });
   }
 
   async getActivity(sessionId: string) {

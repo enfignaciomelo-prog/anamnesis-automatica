@@ -51,16 +51,24 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
       <h2>Compromisos</h2>
       <ul className="plain">
         <li>El audio no se guarda.</li>
-        <li>El navegador no guarda datos clínicos: se mantienen en memoria solo mientras usas la app.</li>
+        <li>
+          El navegador no guarda datos clínicos: se mantienen en memoria solo mientras usas la app. Única excepción: si
+          preparas el dispositivo para trabajar sin conexión, los borradores que escribas se guardan cifrados con tu frase
+          de desbloqueo y se sincronizan con tu cuenta al volver la conexión. Los borradores guardados solo en este
+          dispositivo se eliminan en el corte diario, aunque no se hayan sincronizado.
+        </li>
         <li>
           A las 23:59 (hora de Chile) vence la sesión y se limpian los datos temporales del dispositivo si la app está
           activa, o al volver a abrirla. No se puede garantizar un borrado puntual con la app cerrada. Las anamnesis
           guardadas permanecen en tu cuenta. Los documentos descargados debes eliminarlos tú.
         </li>
-        <li>El modo sin conexión guarda únicamente la estructura de la aplicación, nunca entrevistas.</li>
+        <li>La caché sin conexión guarda únicamente la estructura de la aplicación, nunca entrevistas.</li>
         <li>Cada profesional ve solo sus entrevistas; el servidor lo verifica en cada solicitud.</li>
         <li>Los registros técnicos no contienen texto clínico.</li>
-        <li>Las entrevistas se eliminan según el plazo de retención que elijas, o cuando las borras.</li>
+        <li>
+          Las anamnesis guardadas en tu cuenta no se eliminan automáticamente, salvo que actives y confirmes la eliminación
+          del historial; también puedes borrarlas tú.
+        </li>
         <li>Las claves de los proveedores viven solo en el servidor.</li>
       </ul>
       <p className="muted">

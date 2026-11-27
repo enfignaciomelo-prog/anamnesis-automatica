@@ -121,7 +121,15 @@ borrador de anamnesis según la plantilla seleccionada.
   servidor desde el inicio de la sesión; bloqueo por inactividad configurable.
 - **Navegador:** datos clínicos solo en memoria; limpieza al cerrar o vencer,
   propagada entre pestañas, con descarte de respuestas tardías (`web/session.ts`).
-  La fase de modo offline cifrado será una excepción explícita y documentada.
+  **Excepción explícita (modo sin conexión manual, `web/offline/`):** borradores
+  cifrados con Web Crypto en IndexedDB (`aa-offline`), un espacio por profesional
+  con frase propia (no es la contraseña ni se guarda), que sobreviven al cierre de
+  sesión y se eliminan en el corte diario aunque no estén sincronizados. Desbloquear
+  es local y no prolonga la sesión. Tras sincronizar se borra el contenido local.
+  `Clear-Site-Data` usa solo `"cache"` para no borrar esos borradores.
+- **Sincronización offline:** `POST /api/offline/sync`, idempotente por
+  (profesional, clientId, revisión); conflicto (editada, finalizada o eliminada en
+  el servidor) → 409 sin sobrescribir; la plantilla siempre la resuelve el servidor.
 - **Modo cuentas:** código en `server/real/` (pg, better-auth); se carga solo con
   `DEMO_MODE=false`. Migraciones en `server/real/migrations` (esquema `anamnesis`, RLS).
 - **Pruebas:** las E2E son emulación en Chromium con tamaño de iPhone; no
@@ -141,7 +149,7 @@ borrador de anamnesis según la plantilla seleccionada.
 
 1. Cuentas reales y persistencia. ✅ (falta conexión externa)
 2. Vencimiento diario y limpieza local. ✅
-3. Modo offline manual cifrado y sincronización.
+3. Modo offline manual cifrado y sincronización. ✅ (voz/IA offline: ver `docs/VOZ_IA_OFFLINE.md`)
 4. Micrófono y transcripción real.
 5. Llenado con Claude.
 Voz e IA offline: capacidad posterior por evaluar.

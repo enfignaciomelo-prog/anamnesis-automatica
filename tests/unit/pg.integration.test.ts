@@ -5,7 +5,7 @@
  * Solo datos ficticios (dominio .invalid).
  */
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
@@ -214,6 +214,38 @@ describe("PostgreSQL + Better Auth (integración real)", { skip }, () => {
     }
     const list = await b.json<InterviewSummary[]>("GET", "/api/interviews");
     assert.ok(!list.body.some((i) => i.id === interviewId));
+  });
+
+  it("borradores sin conexión: idempotente tras reiniciar, actualiza sin cambios ajenos y no sobrescribe en conflicto", async () => {
+    const clientId = randomUUID();
+    const base = { clientId, templateId: "generica", templateVersion: 1, createdAt: new Date().toISOString() };
+    const r1 = await a.json<{ interviewId: string; duplicate: boolean }>("POST", "/api/offline/sync", {
+      ...base,
+      revision: 1,
+      fields: { motivo: "DEMO sin conexión" },
+    });
+    assert.equal(r1.status, 200, JSON.stringify(r1.body));
+    // La huella se calcula sobre lo leído de PostgreSQL (jsonb reordena claves): una revisión nueva sin cambios ajenos se acepta.
+    const r2 = await a.json<{ interviewId: string }>("POST", "/api/offline/sync", { ...base, revision: 2, fields: { motivo: "DEMO v2" } });
+    assert.equal(r2.status, 200, JSON.stringify(r2.body));
+    assert.equal(r2.body.interviewId, r1.body.interviewId);
+    // El vínculo persiste en la base: tras reiniciar, reenviar no crea copias.
+    await app.close();
+    await start();
+    const dup = await a.json<{ interviewId: string; duplicate: boolean }>("POST", "/api/offline/sync", { ...base, revision: 2, fields: {} });
+    assert.equal(dup.body.duplicate, true);
+    assert.equal(dup.body.interviewId, r1.body.interviewId);
+    // Otro profesional con el mismo identificador obtiene la suya, nunca la de A.
+    const other = await b.json<{ interviewId: string }>("POST", "/api/offline/sync", { ...base, revision: 1, fields: {} });
+    assert.notEqual(other.body.interviewId, r1.body.interviewId);
+    assert.equal((await b.req("GET", `/api/interviews/${r1.body.interviewId}`)).status, 404);
+    // Edición en el servidor → conflicto, sin sobrescribir.
+    await a.json("POST", `/api/interviews/${r1.body.interviewId}/fields/motivo/confirm`, { value: "DEMO editado en el PC" });
+    const c = await a.json<{ reason: string }>("POST", "/api/offline/sync", { ...base, revision: 3, fields: { motivo: "DEMO teléfono" } });
+    assert.equal(c.status, 409);
+    assert.equal(c.body.reason, "modificada_en_servidor");
+    const snap = await a.json<InterviewSnapshot>("GET", `/api/interviews/${r1.body.interviewId}`);
+    assert.equal(snap.body.fields.motivo.professionalValue, "DEMO editado en el PC");
   });
 
   it("tras reiniciar el servidor, la plantilla, su archivo y la anamnesis siguen y se pueden exportar", async () => {

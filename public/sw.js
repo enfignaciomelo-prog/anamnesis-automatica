@@ -2,10 +2,13 @@
  * Service worker de Anamnesis Automática.
  * Guarda SOLO la estructura de la aplicación (HTML, JS, CSS, íconos).
  * Nunca guarda respuestas de /api: ahí viajan los datos clínicos.
+ * Precarga todos los archivos de la compilación para que la app abra sin
+ * conexión (modo manual: los borradores viven cifrados en IndexedDB, no aquí).
  */
 const VERSION = "__BUILD_VERSION__";
 const CACHE = `aa-shell-${VERSION}`;
-const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/apple-touch-icon.png"];
+const ASSETS = [/*__ASSETS__*/];
+const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/apple-touch-icon.png", ...ASSETS];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
