@@ -91,8 +91,12 @@ borrador de anamnesis según la plantilla seleccionada.
 - **Persistencia detrás de la interfaz `Store`** (`server/store.ts`): hoy en
   memoria; PostgreSQL debe implementar la misma interfaz con el dueño en cada consulta.
 - **Extractor intercambiable:** `server/extraction/demoExtractor.ts` (reglas,
-  simulado) se reemplazará por Claude con salida estructurada que incluya el
-  fragmento de respaldo; `merge.ts` se mantiene.
+  simulado) en la demostración. Con `CLAUDE_FILL=true` (solo modo cuentas), el
+  llenado lo pide el profesional y lo hace Claude (`server/real/anthropicFill.ts`,
+  SDK oficial, salida estructurada); `server/extraction/claudeFill.ts` valida en el
+  servidor cada propuesta contra la transcripción y la plantilla de la entrevista
+  y decide los motivos de revisión. `merge.ts` se mantiene. Resultados ligados a
+  la entrevista, versión de transcripción y sesión; tardíos se descartan.
 - **Despliegue de demostración:** Render (`render.yaml`), configurable desde
   Safari. Alternativa: `Dockerfile`.
 - **Estado real/simulado/pendiente:** mantener `docs/ESTADO.md` al día en cada PR.
@@ -151,7 +155,7 @@ borrador de anamnesis según la plantilla seleccionada.
 2. Vencimiento diario y limpieza local. ✅
 3. Modo offline manual cifrado y sincronización. ✅ (voz/IA offline: ver `docs/VOZ_IA_OFFLINE.md`)
 4. Micrófono y transcripción real. ✅ código (pendiente prueba con Deepgram y Safari reales).
-5. Llenado con Claude.
+5. Llenado con Claude. ✅ código (pendiente verificación con la API real; ver `docs/DESPLIEGUE.md`).
 Voz e IA offline: capacidad posterior por evaluar.
 
 ## Decisiones pendientes (no decidir sin consultar)

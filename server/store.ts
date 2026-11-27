@@ -10,6 +10,7 @@ import type {
   Consent,
   ImportAnalysis,
   InterviewStatus,
+  ProposalItem,
   Segment,
   SourceKind,
   SpeakerRole,
@@ -41,6 +42,29 @@ export interface InterviewRecord {
   prof: Record<string, ProfessionalFieldState | undefined>;
   pauseReason: string | null;
   finalizedAt: number | null;
+  /** Llenado asistido con Claude (ausente si nunca se solicitó). */
+  ai?: AiFillRecord | null;
+}
+
+/** Último resultado válido del llenado asistido (propuestas ya validadas por el servidor). */
+export interface AiFillResult {
+  items: ProposalItem[];
+  transcriptVersion: number;
+  transcriptHash: string;
+  templateVersion: number;
+  accepted: number;
+  discarded: number;
+  completedAt: number;
+  model: string;
+}
+
+export interface AiFillRecord {
+  status: "pendiente" | "listo" | "error" | "descartado";
+  requestId: string;
+  requestedAt: number;
+  message: string | null;
+  /** Se conserva el último resultado válido aunque una solicitud posterior falle. */
+  result: AiFillResult | null;
 }
 
 export interface TemplateVersionRecord {

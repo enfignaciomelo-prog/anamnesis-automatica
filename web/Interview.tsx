@@ -226,6 +226,7 @@ export function InterviewScreen({
             onEvidence={jumpTo}
             onConfirm={(f, v) => run(api.confirm(id, f, v))}
             onNotReported={(f) => run(api.notReported(id, f))}
+            onFill={() => run(api.requestFill(id))}
           />
         </section>
         <section className="pane pane-finalizar" aria-label="Revisión y exportación">
@@ -505,17 +506,22 @@ function Draft({
   onEvidence,
   onConfirm,
   onNotReported,
+  onFill,
 }: {
   snap: InterviewSnapshot;
   onDraft: (fieldId: string, value: string) => Promise<unknown>;
   onEvidence: (segId: string) => void;
   onConfirm: (fieldId: string, value: string | null) => void;
   onNotReported: (fieldId: string) => void;
+  onFill: () => void;
 }) {
   return (
     <div className="draft">
+      {snap.ai && <AiFillPanel snap={snap} onFill={onFill} />}
       <p className="muted small">
-        {snap.transcription === "deepgram"
+        {snap.ai
+          ? "Cada propuesta de Claude muestra el fragmento literal que la respalda. Toca un fragmento para verlo en la transcripción."
+          : snap.transcription === "deepgram"
           ? "Completa los campos a partir de la entrevista y confirma los datos que revisaste."
           : "Cada propuesta muestra el fragmento que la respalda. Toca un fragmento para verlo en la transcripción."}{" "}
         Lo que no se mencionó queda como No referido.
@@ -538,6 +544,46 @@ function Draft({
         </section>
       ))}
     </div>
+  );
+}
+
+/** Llenado asistido con Claude: solicitud, estado y avisos. Las propuestas se muestran en cada campo. */
+function AiFillPanel({ snap, onFill }: { snap: InterviewSnapshot; onFill: () => void }) {
+  const ai = snap.ai!;
+  const blocked =
+    snap.status === "finalizada"
+      ? "La anamnesis ya fue finalizada."
+      : snap.status === "escuchando" || snap.status === "preparada"
+        ? "Pausa o detén la escucha para completar con Claude."
+        : !snap.segments.length
+          ? "Aún no hay transcripción."
+          : null;
+  const pending = ai.status === "pendiente";
+  return (
+    <section className="ai-panel" aria-labelledby="ai-title">
+      <h2 id="ai-title">Llenado asistido con Claude</h2>
+      <p className="muted small">
+        Claude propone datos solo con un fragmento literal de la transcripción; el servidor descarta lo que no tenga respaldo.
+        Medicamentos, dosis, alergias y contradicciones siempre requieren tu revisión, tus correcciones nunca se sobrescriben y
+        nada se finaliza sin tu confirmación.
+      </p>
+      <p className={`ai-status ai-${ai.status}`} role={ai.status === "error" ? "alert" : "status"}>
+        {ai.status === "sin_solicitar" && "Aún no se ha solicitado."}
+        {pending && "Claude está revisando la transcripción… Puedes seguir editando mientras tanto."}
+        {ai.status === "listo" &&
+          `Propuestas listas: ${ai.accepted}${ai.model ? ` (${ai.model})` : ""}. Revisa cada campo antes de finalizar.`}
+        {(ai.status === "error" || ai.status === "descartado") && ai.message}
+      </p>
+      {ai.status === "listo" && ai.message && <p className="muted small">{ai.message}</p>}
+      {ai.stale && (
+        <p className="banner warn small">Hay transcripción nueva desde el último llenado. Vuelve a completar para incluirla.</p>
+      )}
+      {ai.status === "error" && <p className="small">Puedes seguir completando los campos manualmente.</p>}
+      <button className="btn" onClick={onFill} disabled={pending || Boolean(blocked)}>
+        {pending ? "Completando…" : ai.status === "sin_solicitar" ? "Completar con Claude" : "Volver a completar con Claude"}
+      </button>
+      {blocked && !pending && <p className="muted small">{blocked}</p>}
+    </section>
   );
 }
 

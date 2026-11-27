@@ -31,9 +31,15 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
             <td>Disponible en modo cuentas cuando se habilita la transcripción en vivo.</td>
           </tr>
           <tr>
-            <th scope="row">Claude de Anthropic (extracción)</th>
-            <td>El texto transcrito y los campos de la plantilla, para proponer el llenado.</td>
-            <td>Pendiente. Hoy no recibe nada.</td>
+            <th scope="row">Claude de Anthropic (llenado asistido)</th>
+            <td>
+              El texto transcrito (con el rol de cada hablante) y los campos de la plantilla, para proponer el llenado. Nunca
+              el audio ni tu identidad.
+            </td>
+            <td>
+              Solo en modo cuentas, si el servidor lo activa (CLAUDE_FILL=true) y tú lo pides con «Completar con Claude». En la
+              demostración no recibe nada.
+            </td>
           </tr>
           <tr>
             <th scope="row">Supabase (PostgreSQL, São Paulo)</th>

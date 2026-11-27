@@ -4,7 +4,7 @@
 set -euo pipefail
 SRC=/opt/npm-tools/node_modules
 mkdir -p node_modules/@types
-for p in react react-dom typescript tsx esbuild docx pdf-lib pdfjs-dist zod jszip playwright @types/node; do
+for p in react react-dom typescript tsx esbuild docx pdf-lib pdfjs-dist zod jszip playwright ws @types/node @types/ws; do
   [ -e "$SRC/$p" ] && ln -sfn "$SRC/$p" "node_modules/$p"
 done
 echo "Dependencias enlazadas desde $SRC"

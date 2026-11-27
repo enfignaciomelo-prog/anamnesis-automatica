@@ -181,6 +181,27 @@ export interface InterviewSnapshot extends InterviewSummary {
   /** Eliminación automática del servidor; null si el profesional no la configuró. */
   autoDeleteAt: string | null;
   transcription?: "demo" | "deepgram";
+  /** Llenado asistido con Claude; null si no está activado en el servidor. */
+  ai?: AiFillView | null;
+}
+
+export type AiFillStatus = "sin_solicitar" | "pendiente" | "listo" | "error" | "descartado";
+
+/** Estado del llenado asistido, sin contenido clínico propio (las propuestas van en `fields`). */
+export interface AiFillView {
+  status: AiFillStatus;
+  /** Mensaje para el profesional (error o motivo del descarte). */
+  message: string | null;
+  requestedAt: string | null;
+  completedAt: string | null;
+  /** Segmentos definitivos usados en el último resultado. */
+  transcriptVersion: number | null;
+  /** Hay transcripción nueva después del último resultado. */
+  stale: boolean;
+  accepted: number;
+  /** Propuestas descartadas por el servidor (respaldo faltante o que no coincide, etc.). */
+  discarded: number;
+  model: string | null;
 }
 
 export interface InterimEvent {

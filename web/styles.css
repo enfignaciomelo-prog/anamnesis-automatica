@@ -950,3 +950,27 @@ input[type="date"] {
   font: inherit;
   margin-top: 0.25rem;
 }
+
+/* ---- Llenado asistido con Claude ---- */
+.ai-panel {
+  border: 1px solid var(--line, #d9dde3);
+  border-left: 4px solid #4b5d9a;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background: #f7f8fc;
+}
+.ai-panel h2 {
+  font-size: 1rem;
+  margin: 0 0 0.35rem;
+}
+.ai-status {
+  margin: 0.5rem 0;
+  font-weight: 600;
+}
+.ai-status.ai-error {
+  color: #8a1f12;
+}
+.ai-status.ai-descartado {
+  color: #6b4a00;
+}

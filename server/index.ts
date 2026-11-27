@@ -11,6 +11,11 @@ async function main() {
     const { setupReal } = await import("./real/setup");
     deps = await setupReal(config);
   }
+  if (config.testFill) {
+    // Solo pruebas E2E fuera de producción: llenado simulado, sin llamadas externas.
+    const { TestFillProvider } = await import("./extraction/testFillProvider");
+    deps = { ...deps, fillProvider: new TestFillProvider() };
+  }
   const app = createApp(config, deps);
   app.server.listen(config.port, () => {
     // Solo indica qué está activo; nunca imprime claves.
@@ -21,6 +26,8 @@ async function main() {
       store: app.store.kind,
       email: config.email?.transport ?? "ninguno",
       anthropic: config.providers.anthropic,
+      claude_fill: Boolean(config.claude),
+      claude_model: config.claude?.model ?? "ninguno",
       deepgram: config.providers.deepgram,
     });
   });

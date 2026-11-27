@@ -1,8 +1,8 @@
 # Estado de Anamnesis Automática
 
-Última actualización: captura de micrófono y transcripción Deepgram, 27-11-2026.
+Última actualización: llenado asistido con Claude, 27-11-2026.
 
-Orden vigente (decisión del responsable): 1) cuentas y persistencia ✅, 2) vencimiento diario y limpieza local ✅, 3) modo offline cifrado y sincronización ✅, 4) micrófono y transcripción ✅ código / ⚠️ proveedor, 5) llenado con Claude ⏳. Voz e IA offline: capacidad posterior por evaluar.
+Orden vigente (decisión del responsable): 1) cuentas y persistencia ✅, 2) vencimiento diario y limpieza local ✅, 3) modo offline cifrado y sincronización ✅, 4) micrófono y transcripción ✅ código / ⚠️ proveedor, 5) llenado con Claude ✅ código / ⚠️ API real. Voz e IA offline: capacidad posterior por evaluar.
 
 **Leyenda:** ✅ Real (funciona de verdad) · 🧪 Simulado (funciona con datos o
 lógica de demostración) · ⏳ Pendiente (no existe aún)
@@ -18,8 +18,8 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Transcripción | ✅ código / ⚠️ proveedor | Nova-3, español latinoamericano. El modo de demostración conserva el guion ficticio. |
 | Texto provisional separado del definitivo | ✅ | Eventos `interim` y segmentos definitivos distintos en la interfaz. |
 | Asignación de hablantes por el profesional | ✅ | La app no asume quién es el paciente; sin asignar, todo queda en revisión. |
-| Propuestas con fragmento de respaldo | 🧪 | Extractor de reglas (no IA). En demo, tocar el respaldo lleva al fragmento. Con micrófono, el llenado es manual hasta integrar Claude. |
-| Clasificación actual / histórico / negado / familiar | 🧪 | Reglas sobre el texto. Claude: etapa 4. Funciona también en plantillas propias a través del tipo de dato de cada campo. |
+| Propuestas con fragmento de respaldo | 🧪 demo / ✅ código Claude | Demostración: extractor de reglas (no IA). Modo cuentas con `CLAUDE_FILL=true`: Claude a pedido, con validación del respaldo en el servidor (ver abajo). Sin Claude, el llenado con micrófono es manual. |
+| Clasificación actual / histórico / negado / familiar | 🧪 demo / ✅ código Claude | Reglas en la demostración; con Claude, el servidor exige negación explícita y familiar mencionado en el campo familiar. |
 | No convertir lo no mencionado en negación | ✅ | Solo negaciones explícitas; probado. |
 | Contradicciones y autocorrecciones | 🧪 | Reglas (dosis, frecuencia, afirmación/negación, «perdón, mejor dicho»). |
 | Revisión obligatoria de medicamentos, dosis y alergias | ✅ | Siempre «Requiere revisión». |
@@ -123,3 +123,21 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Abrir la app sin conexión | ✅ | El service worker precarga la app; sin servidor se ofrece desbloquear los borradores del dispositivo. |
 | Guardado en varias pestañas | ✅ | IndexedDB confirma la revisión que se está editando y rechaza la segunda escritura concurrente. El editor conserva el texto y permite guardarlo como copia. Los guardados tardíos no recrean espacios eliminados. |
 | Voz e IA sin conexión | ⏳ Evaluación | Ver `docs/VOZ_IA_OFFLINE.md`. No implementado. |
+
+## Llenado asistido con Claude (etapa 5 del orden vigente)
+
+| Función | Estado | Detalle |
+|---|---|---|
+| Activación explícita | ✅ | `CLAUDE_FILL=true` + `ANTHROPIC_API_KEY`, solo modo cuentas. La clave sola no activa nada. La demostración no llama a servicios externos. |
+| Clave solo en el servidor | ✅ | Variables del panel de despliegue; nunca en el navegador ni en registros. |
+| Integración con la API | ⚠️ código sin verificar contra la API real | SDK oficial `@anthropic-ai/sdk` 0.137.0, `claude-opus-5-5`, salida estructurada `json_schema`, streaming, `fallbacks: "default"` desactivable. Ver `docs/DESPLIEGUE.md`. |
+| Entrada | ✅ | Segmentos definitivos, roles asignados y versión de plantilla guardada en la entrevista; la transcripción va como datos. |
+| Validación del respaldo en el servidor | ✅ | Campo de la plantilla, cita literal de un segmento existente (se guarda el texto de la transcripción), negación explícita, familiar mencionado y en el campo familiar, números y palabras presentes en la cita. Lo inválido se descarta y se informa el conteo. |
+| «No referido» | ✅ | Lo no propuesto queda «No referido»; no se deducen negaciones. |
+| Revisión obligatoria | ✅ | Medicamentos, dosis, alergias, contradicciones, duda, acompañante y hablante sin asignar los decide el servidor, no el modelo. |
+| Contradicciones | ✅ | Ambas versiones visibles con su respaldo (misma clave o afirmación frente a negación). |
+| Correcciones manuales | ✅ | Una respuesta que llega después de una edición no la sobrescribe; la propuesta nueva queda a la vista para revisar. |
+| Fallos | ✅ | Error del proveedor, rechazo, respuesta incompleta o inválida: se informa y se puede continuar manualmente. |
+| Respuestas tardías | ✅ | Ligadas a la entrevista, la versión de la transcripción y la sesión. Se descartan tras cierre de sesión, corte diario, revocación, cambio de transcripción o nueva solicitud. |
+| Persistencia | ✅ | Migración `005_ai_fill.sql` (columna `ai` en la fila de la entrevista, mismo dueño y RLS). |
+| Calidad en español de Chile | ⏳ | Requiere prueba con la API real y transcripciones ficticias. |

@@ -21,6 +21,7 @@ import { exportDocx, exportPdf, exportText } from "./export/exporters";
 import { HttpError, readJson, readRaw, securityHeaders, sendJson } from "./http";
 import { type Command, InterviewService } from "./interviews";
 import { logError, logEvent, logRequest } from "./log";
+import type { FillProvider } from "./extraction/fillProvider";
 import { OfflineSyncService, parseSyncRequest } from "./offline";
 import { type InterviewFilter, MemoryStore, type Professional, type Store } from "./store";
 import { MAX_UPLOAD_BYTES } from "./templates/safety";
@@ -68,6 +69,8 @@ export interface AppDeps {
   store?: Store;
   gate?: AuthGate;
   connectDeepgram?: ConnectDeepgram;
+  /** Proveedor del llenado asistido (Claude real en server/real/, o simulado en pruebas). */
+  fillProvider?: FillProvider;
   /** Reloj inyectable (solo pruebas). */
   now?: () => number;
 }
@@ -87,7 +90,11 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
       });
   };
   const gate = deps.gate ?? new DemoAuth(ensureProfessional, now);
-  const service = new InterviewService(store, config, deps.connectDeepgram);
+  const service = new InterviewService(store, config, deps.connectDeepgram, {
+    provider: deps.fillProvider,
+    // El resultado solo se aplica si la sesión que lo pidió sigue vigente y antes de su corte diario.
+    sessionLive: async (s) => now() < nextDailyCutoff(s.createdAt) && (await gate.isActive(s.sessionId)),
+  });
 
   // ---- Canales en vivo ligados a su sesión ----
   // El servidor los cierra por sí mismo al llegar el corte, al revocarse la
@@ -120,6 +127,7 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
   /** Termina una sesión desde el servidor: revoca, pausa lo que escuchaba y cierra sus canales. */
   async function expireSession(s: AuthSession, reason: string) {
     closeSessionStreams(s.sessionId, reason);
+    service.cancelFillsForSession(s.sessionId, reason);
     await gate.revoke(s).catch((e) => logError("revoke", e));
     await store.deleteActivity(s.sessionId).catch(() => undefined);
     // Solo se pausa lo que escuchaba ESTA sesión; una sesión observadora no detiene
@@ -171,6 +179,7 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
         if (!(await gate.isActive(s.sessionId))) {
           // Revocada por otra vía (cierre en otro lugar, cambio de contraseña…).
           closeSessionStreams(s.sessionId, "revocada");
+          service.cancelFillsForSession(s.sessionId, "revocada");
           await service.pauseForSession(s.sessionId, "revocada");
           continue;
         }
@@ -454,6 +463,10 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
         }
         if (m === "POST") {
           const body = await readJson(req);
+          if (sub === "ai" && m === "POST") {
+            if (now() >= authed.cutoffAt) throw new HttpError(401, "sesion_vencida", "La sesión venció en el corte diario.");
+            return sendJson(res, 202, await service.requestFill(p.id, id, authed.session));
+          }
           if (sub === "consent") return sendJson(res, 200, await service.consent(p.id, id, body.givenBy as "paciente"));
           if (sub === "command") {
             const cmd = body.command as Command;
