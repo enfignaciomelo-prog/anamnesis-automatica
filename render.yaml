@@ -37,3 +37,9 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+      # Llenado asistido con Claude: apagado hasta que el responsable lo active
+      # (requiere DEMO_MODE=false). La clave se ingresa solo en el panel.
+      - key: CLAUDE_FILL
+        value: "false"
+      - key: ANTHROPIC_API_KEY
+        sync: false

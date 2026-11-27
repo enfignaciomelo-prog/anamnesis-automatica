@@ -61,10 +61,15 @@ configurado, usa el modo demostración.
 | `EMAIL_FROM` | cuentas | Remitente permitido por Resend |
 | `TRANSCRIPTION_MODE` | ambos | `demo` por defecto. Para activar el micrófono con cuentas, usa `deepgram` |
 | `DEEPGRAM_API_KEY` | cuentas con micrófono | Clave de Deepgram, solo en el panel del servidor |
-| `ANTHROPIC_API_KEY` | etapa 5 del nuevo orden | Aún no se usa |
+| `CLAUDE_FILL` | cuentas | `false` por defecto. `true` activa el llenado asistido con Claude (rechazado en modo demostración) |
+| `ANTHROPIC_API_KEY` | cuentas con Claude | Clave de la API de Claude, solo en el panel del servidor. Sola no activa nada |
+| `CLAUDE_MODEL` | cuentas con Claude | Opcional. `claude-opus-5-5` por defecto |
+| `CLAUDE_EFFORT` | cuentas con Claude | Opcional. `high` por defecto (`low`, `medium`, `high`, `xhigh`, `max`) |
+| `CLAUDE_TIMEOUT_MS` | cuentas con Claude | Opcional. 180000 por defecto (entre 10000 y 600000) |
+| `CLAUDE_FALLBACKS` | cuentas con Claude | Opcional. `false` desactiva el respaldo del servidor ante rechazos de seguridad |
 
 Variables solo para pruebas (nunca en Render): `EMAIL_TRANSPORT=prueba`,
-`ALLOW_TEST_CLOCK=true`, `LOG_ERROR_DETAIL=1`, `TEST_DATABASE_URL`,
+`ALLOW_TEST_CLOCK=true`, `ALLOW_TEST_FILL=true` (llenado simulado, ignorado en producción), `LOG_ERROR_DETAIL=1`, `TEST_DATABASE_URL`,
 `DATABASE_SSL=disable` (rechazada en producción).
 
 Opcional: `SESSION_CHECK_MS` (predeterminado 15000): cada cuánto el servidor
@@ -94,6 +99,49 @@ tratamiento y retención del proyecto de Deepgram por separado.
 
 [Modelos e idiomas de Deepgram](https://developers.deepgram.com/docs/models-languages-overview) ·
 [Referencia de streaming](https://developers.deepgram.com/reference/speech-to-text/listen-streaming)
+
+## Probar el llenado con Claude
+
+Requiere modo cuentas. No necesita Deepgram: con `TRANSCRIPTION_MODE=demo` la
+entrevista usa la transcripción ficticia de la demostración.
+
+1. En el panel **Environment** del servidor agrega `ANTHROPIC_API_KEY` (clave de
+   un proyecto de pruebas) y `CLAUDE_FILL=true`. Nunca pegues la clave en el chat
+   ni en el repositorio. Guarda y espera el nuevo despliegue.
+2. Inicia sesión, crea una entrevista, registra el consentimiento y deja correr
+   la entrevista ficticia hasta «Detenida». Asigna los hablantes.
+3. En la pestaña **Anamnesis**, toca **Completar con Claude**. Mientras responde
+   puedes seguir editando; tus correcciones no se sobrescriben.
+4. Revisa cada propuesta con su fragmento literal. Medicamentos, dosis, alergias
+   y contradicciones quedan en «Requiere revisión». Finalizar exige resolverlos.
+5. Si Claude falla o responde algo inválido, el panel lo informa y puedes
+   completar todo manualmente.
+
+Comportamiento del servidor:
+
+- Envía a Claude solo los segmentos definitivos, el rol asignado a cada hablante
+  y los campos de la versión de plantilla guardada en la entrevista. Nunca audio,
+  nombre del profesional ni identificadores de cuenta.
+- La transcripción va como datos dentro de etiquetas; el texto del paciente no
+  puede cerrarlas ni dar instrucciones.
+- Salida estructurada (`output_config.format`, `json_schema`) con modelo
+  `claude-opus-5-5` y esfuerzo `high`. El SDK oficial está fijado en `0.137.0`.
+- Cada propuesta se valida: campo de la plantilla, cita literal de un segmento
+  existente, negación explícita, familiar mencionado y en el campo familiar, y
+  números y palabras presentes en la cita. Lo demás se descarta y se cuenta.
+- El resultado queda ligado a la entrevista, a la versión de la transcripción y
+  a la sesión que lo pidió. Se descarta si la transcripción cambia, si la sesión
+  se cierra, vence en el corte diario o se revoca, o si llega otra solicitud.
+- Los registros solo guardan conteos y códigos, nunca texto clínico.
+
+Pendiente de verificar con la API real (no se pudo desde el entorno de desarrollo,
+sin acceso al registro npm ni a la API): instalación del SDK `0.137.0` (la CI lo
+instala y compila), aceptación de `fallbacks: "default"` junto con la salida
+estructurada (si la API lo rechaza, usar `CLAUDE_FALLBACKS=false`), tiempo de
+respuesta y calidad de las propuestas en español de Chile. El SDK ya publicó la
+versión 1.0.0 con cambios incompatibles; la actualización queda como tarea aparte.
+
+[Salida estructurada](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
 
 ## Historial y limpieza
 
