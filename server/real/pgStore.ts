@@ -29,6 +29,7 @@ interface InterviewRow {
   speaker_roles: InterviewRecord["speakerRoles"];
   prof: InterviewRecord["prof"];
   pause_reason: string | null;
+  ai: InterviewRecord["ai"];
   created_at: Date;
   last_activity: Date;
   finalized_at: Date | null;
@@ -46,6 +47,7 @@ function toInterview(r: InterviewRow): InterviewRecord {
     speakerRoles: r.speaker_roles,
     prof: r.prof,
     pauseReason: r.pause_reason,
+    ai: r.ai ?? null,
     createdAt: ms(r.created_at)!,
     lastActivity: ms(r.last_activity)!,
     finalizedAt: ms(r.finalized_at),
@@ -170,7 +172,8 @@ export class PgStore implements Store {
       `UPDATE interviews SET title = $3, status = $4, template = $5, consent = $6, segments = $7,
               speaker_roles = $8, prof = $9, pause_reason = $10,
               last_activity = to_timestamp($11 / 1000.0),
-              finalized_at = CASE WHEN $12::bigint IS NULL THEN NULL ELSE to_timestamp($12::bigint / 1000.0) END
+              finalized_at = CASE WHEN $12::bigint IS NULL THEN NULL ELSE to_timestamp($12::bigint / 1000.0) END,
+              ai = $13
         WHERE id = $1 AND owner_id = $2`,
       [
         r.id,
@@ -185,6 +188,7 @@ export class PgStore implements Store {
         r.pauseReason,
         r.lastActivity,
         r.finalizedAt,
+        j(r.ai ?? null),
       ],
     );
     return (res.rowCount ?? 0) > 0;

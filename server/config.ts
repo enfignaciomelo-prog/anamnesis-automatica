@@ -33,6 +33,10 @@ export interface Config {
   testClock: boolean;
   providers: { anthropic: boolean; deepgram: boolean; database: boolean };
   deepgram?: { key: string };
+  /** Proveedor simulado del llenado para pruebas E2E (ALLOW_TEST_FILL=true, nunca en producción). */
+  testFill: boolean;
+  /** Llenado asistido con Claude (CLAUDE_FILL=true, solo modo cuentas). La clave nunca sale del servidor. */
+  claude?: { key: string; model: string; effort: "low" | "medium" | "high" | "xhigh" | "max"; timeoutMs: number };
   database?: { url: string; ssl: "disable" | "verify"; caCert?: string };
   auth?: { secret: string; baseUrl: string };
   email?: { transport: "resend" | "prueba"; resendKey?: string; from?: string };
@@ -52,6 +56,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const deepgramKey = env.DEEPGRAM_API_KEY?.trim();
   if (transcription === "deepgram" && (demo || !deepgramKey))
     throw new Error("Deepgram requiere DEMO_MODE=false y DEEPGRAM_API_KEY.");
+  // Activación explícita: sin CLAUDE_FILL=true no hay llamadas a Claude, aunque exista la clave.
+  const claudeOn = env.CLAUDE_FILL === "true";
+  if (env.CLAUDE_FILL && !["true", "false"].includes(env.CLAUDE_FILL))
+    throw new Error("CLAUDE_FILL admite «true» o «false».");
+  const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
+  if (claudeOn && (demo || !anthropicKey))
+    throw new Error("El llenado con Claude requiere DEMO_MODE=false y ANTHROPIC_API_KEY.");
+  const effort = (env.CLAUDE_EFFORT ?? "high") as NonNullable<Config["claude"]>["effort"];
+  if (!["low", "medium", "high", "xhigh", "max"].includes(effort))
+    throw new Error("CLAUDE_EFFORT admite low, medium, high, xhigh o max.");
+  const model = (env.CLAUDE_MODEL ?? "claude-opus-5-5").trim();
+  if (!/^claude-[a-z0-9.-]{3,60}$/.test(model)) throw new Error("CLAUDE_MODEL no es un identificador de modelo válido.");
   const base: Config = {
     port: Number(env.PORT ?? 3000),
     demo,
@@ -66,8 +82,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ocr: env.OCR !== "false",
     sessionCheckMs: Math.max(100, Number(env.SESSION_CHECK_MS ?? 15_000)),
     testClock: env.ALLOW_TEST_CLOCK === "true" && !production && demo,
+    testFill: env.ALLOW_TEST_FILL === "true" && !production && demo,
     providers,
     ...(transcription === "deepgram" && deepgramKey ? { deepgram: { key: deepgramKey } } : {}),
+    ...(claudeOn && anthropicKey
+      ? {
+          claude: {
+            key: anthropicKey,
+            model,
+            effort,
+            timeoutMs: Math.min(Math.max(Number(env.CLAUDE_TIMEOUT_MS ?? 180_000), 10_000), 600_000),
+          },
+        }
+      : {}),
   };
   if (demo) return base;
 

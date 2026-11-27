@@ -216,6 +216,43 @@ describe("PostgreSQL + Better Auth (integración real)", { skip }, () => {
     assert.ok(!list.body.some((i) => i.id === interviewId));
   });
 
+  it("guarda en PostgreSQL el resultado del llenado con Claude, ligado al dueño", async () => {
+    const ownerId = (await a.json<SessionInfo>("GET", "/api/session")).body.professional.id;
+    const { body } = await a.json<InterviewSnapshot>("POST", "/api/interviews", {});
+    const r = await app.service.record(ownerId, body.id);
+    r.ai = {
+      status: "listo",
+      requestId: randomUUID(),
+      requestedAt: Date.now(),
+      message: null,
+      result: {
+        items: [
+          {
+            id: "ia-prueba",
+            fieldId: "tabaco",
+            value: "No fuma",
+            classification: "negado",
+            evidence: [{ segmentId: "s1", quote: "DEMO: no fumo", start: 0 }],
+            reasons: [],
+          },
+        ],
+        transcriptVersion: 1,
+        transcriptHash: "h",
+        templateVersion: 1,
+        accepted: 1,
+        discarded: 0,
+        completedAt: Date.now(),
+        model: "simulado",
+      },
+    };
+    assert.equal(await app.store.saveInterview(r), true);
+    const back = await app.store.getInterview(ownerId, body.id);
+    assert.equal(back?.ai?.status, "listo");
+    assert.equal(back?.ai?.result?.items[0].evidence[0].quote, "DEMO: no fumo");
+    const otherId = (await b.json<SessionInfo>("GET", "/api/session")).body.professional.id;
+    assert.equal(await app.store.getInterview(otherId, body.id), undefined);
+  });
+
   it("borradores sin conexión: idempotente tras reiniciar, actualiza sin cambios ajenos y no sobrescribe en conflicto", async () => {
     const clientId = randomUUID();
     const base = { clientId, templateId: "generica", templateVersion: 1, createdAt: new Date().toISOString() };

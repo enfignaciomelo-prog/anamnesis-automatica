@@ -8,7 +8,9 @@
  * entrevista se encadenan para conservar el orden.
  */
 import type { ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import type {
+  AiFillView,
   Consent,
   FieldState,
   InterviewSnapshot,
@@ -20,7 +22,9 @@ import { GENERIC_TEMPLATE, allFields } from "../shared/template-generic";
 import type { AuthSession } from "./auth/types";
 import type { Config } from "./config";
 import { DEMO_SCRIPT } from "./demo/script";
+import { InvalidFillResponse, transcriptHash, validateFill } from "./extraction/claudeFill";
 import { extractDemo } from "./extraction/demoExtractor";
+import { type FillProvider, FillProviderError } from "./extraction/fillProvider";
 import { computeFields } from "./extraction/merge";
 import { HttpError } from "./http";
 import { logError, logEvent } from "./log";
@@ -30,6 +34,19 @@ import { DemoSource } from "./transcription/demoSource";
 import type { TranscriptionSource } from "./transcription/source";
 
 export type Command = "iniciar" | "pausar" | "reanudar" | "detener";
+
+export interface FillOptions {
+  /** Proveedor del llenado asistido (Claude o simulado). Sin él, se usa el extractor de reglas. */
+  provider?: FillProvider;
+  /** ¿La sesión que pidió el llenado sigue vigente? (revocación, cierre, corte diario). */
+  sessionLive?: (s: AuthSession) => Promise<boolean>;
+}
+
+interface PendingFill {
+  requestId: string;
+  session: AuthSession;
+  controller: AbortController;
+}
 
 const ROLES: SpeakerRole[] = ["profesional", "paciente", "acompanante", "sin_asignar"];
 const MAX_TEXT = 5000;
@@ -44,12 +61,19 @@ export class InterviewService {
   private writes = new Map<string, Promise<unknown>>();
   /** Sesión que inició o reanudó la escucha de cada entrevista (dueña del micrófono). */
   private listeners = new Map<string, AuthSession>();
+  /** Solicitudes de llenado en curso (una por entrevista). */
+  private fills = new Map<string, PendingFill>();
 
   constructor(
     private store: Store,
     private config: Config,
     private connectDeepgram?: ConnectDeepgram,
+    private fillOptions: FillOptions = {},
   ) {}
+
+  get fillEnabled() {
+    return Boolean(this.fillOptions.provider);
+  }
 
   private async get(ownerId: string, id: string): Promise<InterviewRecord> {
     const cached = this.live.get(id);
@@ -73,7 +97,7 @@ export class InterviewService {
   }
 
   private releaseIfIdle(id: string) {
-    if (!this.sources.has(id) && !(this.subscribers.get(id)?.size ?? 0)) this.live.delete(id);
+    if (!this.sources.has(id) && !this.fills.has(id) && !(this.subscribers.get(id)?.size ?? 0)) this.live.delete(id);
   }
 
   /** Escribe en orden; el resultado indica si el servidor confirmó el guardado. */
@@ -121,8 +145,191 @@ export class InterviewService {
   }
 
   fields(r: InterviewRecord): Record<string, FieldState> {
-    const items = this.usesDeepgram(r) ? [] : extractDemo(r.segments, r.speakerRoles, r.template);
+    // Con llenado asistido, las propuestas son las validadas del último resultado;
+    // si no, el extractor de reglas (demostración) o nada (micrófono sin Claude).
+    const items = this.fillEnabled
+      ? (r.ai?.result?.items ?? [])
+      : this.usesDeepgram(r)
+        ? []
+        : extractDemo(r.segments, r.speakerRoles, r.template);
     return computeFields(r.template, items, r.prof);
+  }
+
+  private aiView(r: InterviewRecord): AiFillView | null {
+    if (!this.fillEnabled) return null;
+    const a = r.ai;
+    const res = a?.result ?? null;
+    // Pendiente sin solicitud en este proceso: se interrumpió (p. ej., reinicio).
+    const interrupted = a?.status === "pendiente" && this.fills.get(r.id)?.requestId !== a.requestId;
+    return {
+      status: !a ? "sin_solicitar" : interrupted ? "error" : a.status,
+      message: interrupted
+        ? "La solicitud a Claude se interrumpió. Vuelve a solicitarla o completa manualmente."
+        : (a?.message ?? null),
+      requestedAt: a ? new Date(a.requestedAt).toISOString() : null,
+      completedAt: res ? new Date(res.completedAt).toISOString() : null,
+      transcriptVersion: res?.transcriptVersion ?? null,
+      stale: Boolean(res && res.transcriptHash !== transcriptHash(r.segments)),
+      accepted: res?.accepted ?? 0,
+      discarded: res?.discarded ?? 0,
+      model: res?.model ?? null,
+    };
+  }
+
+  // ---- Llenado asistido con Claude ----
+
+  /**
+   * Solicita propuestas a partir de los segmentos definitivos y la versión de
+   * plantilla guardada. El resultado queda ligado a la entrevista, a la versión
+   * de la transcripción y a la sesión que lo pidió; si alguna cambia o termina
+   * antes de la respuesta, se descarta.
+   */
+  async requestFill(ownerId: string, id: string, session: AuthSession) {
+    const provider = this.fillOptions.provider;
+    if (!provider) throw new HttpError(404, "llenado_inactivo", "El llenado con Claude no está activado en este servidor.");
+    const r = await this.get(ownerId, id);
+    this.requireEditable(r);
+    if (r.status !== "pausada" && r.status !== "detenida")
+      throw new HttpError(409, "estado_invalido", "Pausa o detén la escucha antes de completar con Claude.");
+    if (!r.segments.length) throw new HttpError(409, "sin_transcripcion", "Aún no hay transcripción para completar.");
+    if (this.fills.has(r.id))
+      throw new HttpError(409, "llenado_en_curso", "Ya hay una solicitud a Claude en curso para esta entrevista.");
+
+    const requestId = randomUUID();
+    const input = {
+      template: structuredClone(r.template),
+      segments: structuredClone(r.segments),
+      roles: { ...r.speakerRoles },
+    };
+    const version = { hash: transcriptHash(input.segments), count: input.segments.length, template: r.template.version };
+    const pending: PendingFill = { requestId, session, controller: new AbortController() };
+    this.fills.set(r.id, pending);
+    this.retain(r);
+    r.ai = { status: "pendiente", requestId, requestedAt: Date.now(), message: null, result: r.ai?.result ?? null };
+    try {
+      await this.commit(r);
+    } catch (e) {
+      this.fills.delete(r.id);
+      this.releaseIfIdle(r.id);
+      throw e;
+    }
+    logEvent("ai_fill_requested", { segments: version.count });
+    void this.runFill(ownerId, r.id, provider, input, version, pending);
+    return this.snapshot(r);
+  }
+
+  private async runFill(
+    ownerId: string,
+    id: string,
+    provider: FillProvider,
+    input: { template: InterviewRecord["template"]; segments: InterviewRecord["segments"]; roles: InterviewRecord["speakerRoles"] },
+    version: { hash: string; count: number; template: number },
+    pending: PendingFill,
+  ) {
+    let raw: unknown;
+    let failure: string | null = null;
+    try {
+      raw = await provider.fill(input, pending.controller.signal);
+    } catch (e) {
+      if (pending.controller.signal.aborted) return; // cancelada: ya se informó
+      failure =
+        e instanceof FillProviderError
+          ? e.userMessage
+          : "No se pudo obtener la respuesta de Claude. Puedes completar los campos manualmente.";
+      logEvent("ai_fill_failed", { code: e instanceof FillProviderError ? e.code : "desconocido" });
+    }
+
+    // Solo la solicitud vigente puede escribir (no una cancelada o reemplazada).
+    if (this.fills.get(id)?.requestId !== pending.requestId) {
+      logEvent("ai_fill_discarded", { reason: "reemplazada" });
+      return;
+    }
+    this.fills.delete(id);
+    let r: InterviewRecord | undefined;
+    try {
+      r = this.live.get(id) ?? (await this.store.getInterview(ownerId, id));
+    } catch (e) {
+      logError("ai_fill_load", e);
+    }
+    if (!r || r.ownerId !== ownerId) {
+      logEvent("ai_fill_discarded", { reason: "eliminada" });
+      return;
+    }
+    try {
+      const discard = async (reason: string, message: string) => {
+        logEvent("ai_fill_discarded", { reason });
+        r.ai = { ...r.ai!, status: "descartado", message };
+        await this.commit(r);
+      };
+      if (r.ai?.requestId !== pending.requestId) return logEvent("ai_fill_discarded", { reason: "reemplazada" });
+      if (r.status === "finalizada") return logEvent("ai_fill_discarded", { reason: "finalizada" });
+      if (transcriptHash(r.segments) !== version.hash || r.template.version !== version.template)
+        return await discard(
+          "version",
+          "Se descartó la respuesta de Claude porque la transcripción cambió. Vuelve a solicitarla.",
+        );
+      const live = this.fillOptions.sessionLive ? await this.fillOptions.sessionLive(pending.session) : true;
+      if (!live)
+        return await discard("sesion", "Se descartó la respuesta de Claude porque la sesión que la pidió terminó.");
+
+      if (failure === null) {
+        try {
+          const v = validateFill(raw, input.template, input.segments, input.roles);
+          r.ai = {
+            status: "listo",
+            requestId: pending.requestId,
+            requestedAt: r.ai.requestedAt,
+            message: v.discarded
+              ? `${v.discarded} propuesta(s) se descartaron porque su respaldo faltaba o no coincidía con la transcripción.`
+              : null,
+            result: {
+              items: v.items,
+              transcriptVersion: version.count,
+              transcriptHash: version.hash,
+              templateVersion: version.template,
+              accepted: v.accepted,
+              discarded: v.discarded,
+              completedAt: Date.now(),
+              model: provider.model,
+            },
+          };
+          logEvent("ai_fill_done", { accepted: v.accepted, discarded: v.discarded, reasons: Object.entries(v.discardReasons).map(([k, n]) => `${k}:${n}`).join(",") });
+        } catch (e) {
+          if (!(e instanceof InvalidFillResponse)) throw e;
+          failure = "Claude devolvió una respuesta inválida. No se aplicó nada; puedes completar manualmente.";
+          logEvent("ai_fill_failed", { code: "respuesta_invalida" });
+        }
+      }
+      if (failure !== null) r.ai = { ...r.ai, status: "error", message: failure };
+      await this.commit(r);
+    } catch (e) {
+      logError("ai_fill_apply", e);
+    } finally {
+      this.releaseIfIdle(id);
+    }
+  }
+
+  /** Cancela una solicitud en curso y deja constancia en la entrevista (si está en memoria). */
+  private cancelFill(id: string, message: string, reason: string) {
+    const p = this.fills.get(id);
+    if (!p) return;
+    this.fills.delete(id);
+    p.controller.abort();
+    logEvent("ai_fill_discarded", { reason });
+    const r = this.live.get(id);
+    if (r?.ai?.requestId === p.requestId) {
+      r.ai = { ...r.ai, status: "descartado", message };
+      this.persist(r).catch((e) => logError("ai_fill_cancel", e));
+      this.broadcast(r);
+    }
+    this.releaseIfIdle(id);
+  }
+
+  /** La sesión terminó (cierre, corte diario, revocación, inactividad): se descartan sus solicitudes. */
+  cancelFillsForSession(sessionId: string, reason: string) {
+    for (const [id, p] of [...this.fills])
+      if (p.session.sessionId === sessionId)
+        this.cancelFill(id, "Se descartó la solicitud a Claude porque la sesión que la pidió terminó.", reason);
   }
 
   summary(r: InterviewRecord): InterviewSummary {
@@ -146,6 +353,7 @@ export class InterviewService {
       segments: r.segments,
       speakerRoles: r.speakerRoles,
       fields: this.fields(r),
+      ai: this.aiView(r),
       pauseReason: r.pauseReason,
       finalizedAt: r.finalizedAt ? new Date(r.finalizedAt).toISOString() : null,
       demo: this.config.demo,
@@ -295,6 +503,8 @@ export class InterviewService {
   }
 
   private appendSegment(r: InterviewRecord, segment: Omit<InterviewRecord["segments"][number], "id">) {
+    if (this.fills.has(r.id))
+      this.cancelFill(r.id, "Se descartó la solicitud a Claude porque la transcripción cambió. Vuelve a solicitarla.", "version");
     r.segments.push({ ...segment, id: `s${r.segments.length + 1}` });
     r.speakerRoles[segment.speaker] ??= "sin_asignar";
     r.lastActivity = Date.now();
@@ -465,6 +675,9 @@ export class InterviewService {
   async delete(ownerId: string, id: string) {
     const r = await this.get(ownerId, id);
     this.listeners.delete(r.id);
+    const p = this.fills.get(r.id);
+    this.fills.delete(r.id);
+    p?.controller.abort();
     this.sources.get(r.id)?.stop();
     this.sources.delete(r.id);
     this.live.delete(r.id);
