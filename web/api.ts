@@ -132,6 +132,7 @@ export const api = {
     capture?: { captureId: string; sampleRate: number },
   ) => save<InterviewSnapshot>("POST", `/api/interviews/${id}/command`, { command, reason, ...capture }),
   audio: async (id: string, capture: string, sequence: number, bytes: ArrayBuffer, abort: AbortSignal) => {
+    const generation = currentGeneration();
     const response = await raw(`/api/interviews/${id}/audio?captura=${capture}&secuencia=${sequence}`, {
       method: "POST",
       body: bytes,
@@ -140,6 +141,7 @@ export const api = {
     });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
+      if (generation !== currentGeneration() || abort.aborted) throw new CancelledError();
       if (response.status === 401 && SESSION_ERRORS.has(data.error)) void endSession(data.error, true);
       throw new ApiError(response.status, data.error ?? "audio", data.message ?? "Se interrumpió el audio.");
     }
