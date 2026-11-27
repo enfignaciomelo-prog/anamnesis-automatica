@@ -202,7 +202,7 @@ export class OfflineVault {
     const s = await seal(this.requireKey(), aad(this.space.spaceId, id), value);
     this.requireKey();
     const saved = await this.b.putRecord({ spaceId: this.space.spaceId, id, ...s }, expected);
-    if (!saved && !expected) throw new Error("El espacio local venció o se eliminó.");
+    if (!saved) await this.touch();
     return saved;
   }
 
