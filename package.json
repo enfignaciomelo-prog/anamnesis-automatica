@@ -18,6 +18,7 @@
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
     "test": "node --import tsx --test tests/unit/*.test.ts",
     "test:e2e": "python3 .claude/skills/webapp-testing/scripts/with_server.py --server \"exec env DEMO_SPEED=20 ALLOW_TEST_CLOCK=true PORT=4173 node --import tsx server/index.ts\" --port 4173 -- python3 tests/e2e/run_all.py",
+    "test:e2e:voz": "python3 .claude/skills/webapp-testing/scripts/with_server.py --server \"exec env PORT=4174 node --import tsx tests/e2e/voice_server.ts\" --port 4174 -- python3 tests/e2e/voice_flow.py",
     "fixtures": "python3 scripts/make-fixtures.py",
     "typecheck:offline": "tsc -p tsconfig.offline.json --noEmit"
   },
@@ -27,6 +28,7 @@
     "jszip": "3.10.1",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.2.108",
+    "ws": "8.23.1",
     "pg": "8.23.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -35,6 +37,7 @@
   "devDependencies": {
     "@types/node": "26.6.3",
     "@types/pg": "8.23.1",
+    "@types/ws": "8.18.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "6.3.0",

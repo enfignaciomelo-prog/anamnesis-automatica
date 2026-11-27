@@ -91,6 +91,7 @@ export type SpeakerRole = "profesional" | "paciente" | "acompanante" | "sin_asig
 
 export interface Segment {
   id: string;
+  source?: "deepgram";
   /** Etiqueta del proveedor de transcripción (diarización). Nunca implica identidad. */
   speaker: number;
   text: string;
@@ -153,6 +154,7 @@ export interface FieldState {
 export type InterviewStatus = "preparada" | "escuchando" | "pausada" | "detenida" | "finalizada";
 
 export interface Consent {
+  transcription?: "deepgram";
   at: string;
   givenBy: "paciente" | "representante";
 }
@@ -178,6 +180,7 @@ export interface InterviewSnapshot extends InterviewSummary {
   demo: boolean;
   /** Eliminación automática del servidor; null si el profesional no la configuró. */
   autoDeleteAt: string | null;
+  transcription?: "demo" | "deepgram";
 }
 
 export interface InterimEvent {

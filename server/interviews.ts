@@ -25,6 +25,7 @@ import { computeFields } from "./extraction/merge";
 import { HttpError } from "./http";
 import { logError, logEvent } from "./log";
 import type { InterviewFilter, InterviewRecord, Store } from "./store";
+import { DeepgramSource, type AudioCapture, type ConnectDeepgram } from "./transcription/deepgram";
 import { DemoSource } from "./transcription/demoSource";
 import type { TranscriptionSource } from "./transcription/source";
 
@@ -34,6 +35,7 @@ const ROLES: SpeakerRole[] = ["profesional", "paciente", "acompanante", "sin_asi
 const MAX_TEXT = 5000;
 
 export class InterviewService {
+  private finishing = new Set<string>();
   private sources = new Map<string, TranscriptionSource>();
   private subscribers = new Map<string, Set<ServerResponse>>();
   private disconnectTimers = new Map<string, NodeJS.Timeout>();
@@ -46,6 +48,7 @@ export class InterviewService {
   constructor(
     private store: Store,
     private config: Config,
+    private connectDeepgram?: ConnectDeepgram,
   ) {}
 
   private async get(ownerId: string, id: string): Promise<InterviewRecord> {
@@ -56,6 +59,12 @@ export class InterviewService {
     }
     const r = await this.store.getInterview(ownerId, id);
     if (!r) throw notFound();
+    if (r.status === "escuchando" && this.usesDeepgram(r)) {
+      // El proceso anterior pudo terminar sin cerrar la captura.
+      r.status = "pausada";
+      r.pauseReason = "conexion";
+      await this.persist(r);
+    }
     return r;
   }
 
@@ -112,7 +121,7 @@ export class InterviewService {
   }
 
   fields(r: InterviewRecord): Record<string, FieldState> {
-    const items = extractDemo(r.segments, r.speakerRoles, r.template);
+    const items = this.usesDeepgram(r) ? [] : extractDemo(r.segments, r.speakerRoles, r.template);
     return computeFields(r.template, items, r.prof);
   }
 
@@ -140,6 +149,7 @@ export class InterviewService {
       pauseReason: r.pauseReason,
       finalizedAt: r.finalizedAt ? new Date(r.finalizedAt).toISOString() : null,
       demo: this.config.demo,
+      transcription: this.usesDeepgram(r) ? "deepgram" : "demo",
       autoDeleteAt: days === null ? null : new Date(r.lastActivity + days * 86_400_000).toISOString(),
     };
   }
@@ -193,22 +203,103 @@ export class InterviewService {
     this.requireEditable(r);
     if (givenBy !== "paciente" && givenBy !== "representante")
       throw new HttpError(400, "consentimiento_invalido", "Indica quién otorgó el consentimiento.");
-    r.consent = { at: new Date().toISOString(), givenBy };
+    r.consent = { at: new Date().toISOString(), givenBy, ...(this.usesDeepgram(r) ? { transcription: "deepgram" } : {}) };
     await this.commit(r);
     logEvent("consent_recorded");
     return this.snapshot(r);
   }
 
-  async command(ownerId: string, id: string, cmd: Command, reason: string | null = null, session?: AuthSession) {
+  private usesDeepgram(r: InterviewRecord) {
+    const src = this.sources.get(r.id);
+    if (src) return src.kind === "deepgram";
+    if (r.segments.length) return r.segments.some((segment) => segment.source === "deepgram");
+    if (r.consent?.transcription === "deepgram") return true;
+    if (!r.consent && (r.status === "detenida" || r.status === "finalizada")) return false; // borrador escrito offline
+    return !!this.config.deepgram;
+  }
+
+  async command(
+    ownerId: string, id: string, cmd: Command, reason: string | null = null,
+    session?: AuthSession, capture?: AudioCapture, requestedCaptureId?: string,
+  ) {
     const r = await this.get(ownerId, id);
     this.requireEditable(r);
     this.retain(r);
-    this.applyCommand(r, cmd, reason);
-    // La escucha queda ligada a la sesión que la inició o reanudó.
-    if ((cmd === "iniciar" || cmd === "reanudar") && session && r.status === "escuchando") this.listeners.set(r.id, session);
-    await this.commit(r);
-    this.releaseIfIdle(r.id);
-    return this.snapshot(r);
+    try {
+      const src = this.sources.get(id);
+      const listening = this.listeners.get(id);
+      if (src instanceof DeepgramSource && r.status === "escuchando" && listening?.sessionId !== session?.sessionId)
+        throw new HttpError(409, "otra_sesion", "Los controles de escucha están en el dispositivo que activó el micrófono.");
+      if (src instanceof DeepgramSource && reason === "segundo_plano" && src.capture.id !== requestedCaptureId)
+        throw new HttpError(409, "captura_inactiva", "La interrupción corresponde a otra captura.");
+      if (this.finishing.has(id))
+        throw new HttpError(409, "cerrando_audio", "Espera a que termine de procesarse el audio.");
+
+      if (this.usesDeepgram(r) && (cmd === "iniciar" || cmd === "reanudar")) {
+        const validStatus = cmd === "iniciar" ? "preparada" : "pausada";
+        if (r.status !== validStatus) throw new HttpError(409, "estado_invalido", "Esa acción no está disponible.");
+        if (r.consent?.transcription !== "deepgram") throw new HttpError(403, "sin_consentimiento", "Registra el consentimiento antes de activar el micrófono.");
+        if (!this.config.deepgram) throw new HttpError(503, "transcripcion_no_disponible", "La transcripción está desactivada.");
+        if (!capture || !session) throw new HttpError(400, "captura_requerida", "Activa el micrófono para escuchar.");
+        const offset = r.segments.reduce((max, seg) => Math.max(max, seg.end), 0);
+        const speaker = r.segments.reduce((max, seg) => Math.max(max, seg.speaker + 1), 1);
+        const source = new DeepgramSource(
+          capture, this.config.deepgram.key,
+          {
+            onInterim: (sp, text) => this.emit(r.id, "interim", { speaker: sp, text }),
+            onFinal: (seg) => this.appendSegment(r, { ...seg, source: "deepgram" }),
+            onEnd: () => undefined,
+          },
+          offset, speaker,
+          () => {
+            if (this.sources.get(id) !== source || r.status !== "escuchando") return;
+            this.applyCommand(r, "pausar", "transcripcion");
+            void this.commit(r).catch((e) => logError("capture_pause", e)).finally(() => this.releaseIfIdle(id));
+          },
+          this.connectDeepgram,
+        );
+        this.sources.set(id, source);
+        r.status = "escuchando";
+        r.pauseReason = null;
+        this.listeners.set(id, session);
+        source.start();
+      } else {
+        let incomplete = false;
+        if (src instanceof DeepgramSource && (cmd === "pausar" || cmd === "detener") &&
+            (!reason || reason === "audio_incompleto") && r.status === "escuchando") {
+          this.finishing.add(id);
+          try { incomplete = !(await src.finish()) || reason === "audio_incompleto"; }
+          finally { this.finishing.delete(id); }
+          // El cierre de sesión pudo suspender la captura mientras se vaciaba.
+          if (r.status !== "escuchando" || !this.listeners.has(id)) return this.snapshot(r);
+        }
+        this.applyCommand(r, cmd, incomplete ? "audio_incompleto" : reason);
+        if (incomplete) r.pauseReason = "audio_incompleto";
+        if ((cmd === "iniciar" || cmd === "reanudar") && session && r.status === "escuchando") this.listeners.set(id, session);
+      }
+      await this.commit(r);
+      return this.snapshot(r);
+    } finally {
+      this.releaseIfIdle(r.id);
+    }
+  }
+
+  async acceptAudio(ownerId: string, interviewId: string, sessionId: string, captureId: string, sequence: number, pcm: Buffer) {
+    const r = this.live.get(interviewId);
+    if (!r || r.ownerId !== ownerId) throw notFound();
+    const src = this.sources.get(interviewId);
+    if (!(src instanceof DeepgramSource) || r.status !== "escuchando" || src.capture.id !== captureId ||
+        this.listeners.get(interviewId)?.sessionId !== sessionId)
+      throw new HttpError(409, "captura_inactiva", "No hay una captura activa para este dispositivo.");
+    await src.send(sequence, pcm);
+  }
+
+  private appendSegment(r: InterviewRecord, segment: Omit<InterviewRecord["segments"][number], "id">) {
+    r.segments.push({ ...segment, id: `s${r.segments.length + 1}` });
+    r.speakerRoles[segment.speaker] ??= "sin_asignar";
+    r.lastActivity = Date.now();
+    this.persist(r).catch((e) => logError("segment_save", e));
+    this.broadcast(r);
   }
 
   private applyCommand(r: InterviewRecord, cmd: Command, reason: string | null) {
@@ -228,13 +319,7 @@ export class InterviewService {
         DEMO_SCRIPT,
         {
           onInterim: (speaker, text) => this.emit(r.id, "interim", { speaker, text }),
-          onFinal: (seg) => {
-            r.segments.push({ ...seg, id: `s${r.segments.length + 1}` });
-            for (const sp of new Set(r.segments.map((s) => s.speaker))) r.speakerRoles[sp] ??= "sin_asignar";
-            r.lastActivity = Date.now();
-            this.persist(r).catch((e) => logError("segment_save", e));
-            this.broadcast(r);
-          },
+          onFinal: (seg) => this.appendSegment(r, seg),
           onEnd: () => {
             if (r.status === "escuchando" || r.status === "pausada") {
               r.status = "detenida";
@@ -254,7 +339,9 @@ export class InterviewService {
       src.start();
     } else if (cmd === "pausar") {
       this.listeners.delete(r.id);
-      this.sources.get(r.id)?.pause();
+      const src = this.sources.get(r.id);
+      src?.pause();
+      if (src instanceof DeepgramSource) this.sources.delete(r.id);
       r.status = "pausada";
       r.pauseReason = reason;
     } else if (cmd === "reanudar") {

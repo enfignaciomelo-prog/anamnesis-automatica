@@ -49,7 +49,7 @@ async function raw(path: string, init: RequestInit): Promise<Response> {
   const g = currentGeneration();
   let res: Response;
   try {
-    res = await fetch(path, { ...init, credentials: "same-origin", cache: "no-store", signal: signal() });
+    res = await fetch(path, { ...init, credentials: "same-origin", cache: "no-store", signal: init.signal ?? signal() });
   } catch (e) {
     if (g !== currentGeneration() || (e as Error)?.name === "AbortError") throw new CancelledError();
     throw new ApiError(0, "red", "Sin conexión con el servidor. Lo que no se guardó puede perderse; intenta de nuevo.");
@@ -127,8 +127,25 @@ export const api = {
   remove: (id: string) => save<{ ok: true }>("DELETE", `/api/interviews/${id}`),
   consent: (id: string, givenBy: "paciente" | "representante") =>
     save<InterviewSnapshot>("POST", `/api/interviews/${id}/consent`, { givenBy }),
-  command: (id: string, command: "iniciar" | "pausar" | "reanudar" | "detener", reason?: string) =>
-    save<InterviewSnapshot>("POST", `/api/interviews/${id}/command`, { command, reason }),
+  command: (
+    id: string, command: "iniciar" | "pausar" | "reanudar" | "detener", reason?: string,
+    capture?: { captureId: string; sampleRate: number },
+  ) => save<InterviewSnapshot>("POST", `/api/interviews/${id}/command`, { command, reason, ...capture }),
+  audio: async (id: string, capture: string, sequence: number, bytes: ArrayBuffer, abort: AbortSignal) => {
+    const generation = currentGeneration();
+    const response = await raw(`/api/interviews/${id}/audio?captura=${capture}&secuencia=${sequence}`, {
+      method: "POST",
+      body: bytes,
+      headers: { "Content-Type": "application/octet-stream" },
+      signal: abort,
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      if (generation !== currentGeneration() || abort.aborted) throw new CancelledError();
+      if (response.status === 401 && SESSION_ERRORS.has(data.error)) void endSession(data.error, true);
+      throw new ApiError(response.status, data.error ?? "audio", data.message ?? "Se interrumpió el audio.");
+    }
+  },
   setRole: (id: string, speaker: number, role: SpeakerRole) =>
     save<InterviewSnapshot>("POST", `/api/interviews/${id}/speakers`, { speaker, role }),
   saveDraft: (id: string, fieldId: string, value: string) =>
@@ -199,12 +216,12 @@ export const accounts = {
 };
 
 /** Pausa al pasar a segundo plano; `keepalive` permite enviarla mientras la página se oculta. */
-export function pauseInBackground(id: string) {
+export function pauseInBackground(id: string, captureId?: string) {
   try {
     void fetch(`/api/interviews/${id}/command`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command: "pausar", reason: "segundo_plano" }),
+      body: JSON.stringify({ command: "pausar", reason: "segundo_plano", captureId }),
       keepalive: true,
       credentials: "same-origin",
     }).catch(() => undefined);

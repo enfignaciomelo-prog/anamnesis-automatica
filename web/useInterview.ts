@@ -14,6 +14,7 @@ export function useInterview(id: string, onDeleted: () => void) {
   const [interim, setInterim] = useState<InterimEvent | null>(null);
   const [conn, setConn] = useState<Connection>("conectando");
   const statusRef = useRef<string | null>(null);
+  const realVoice = useRef(false);
   const deletedRef = useRef(onDeleted);
   deletedRef.current = onDeleted;
 
@@ -24,6 +25,7 @@ export function useInterview(id: string, onDeleted: () => void) {
     es.addEventListener("snapshot", (e) => {
       const s = JSON.parse((e as MessageEvent).data) as InterviewSnapshot;
       statusRef.current = s.status;
+      realVoice.current = s.transcription === "deepgram";
       setSnap(s);
       setConn("conectado");
       if (s.status !== "escuchando") setInterim(null);
@@ -50,10 +52,10 @@ export function useInterview(id: string, onDeleted: () => void) {
     // iPhone: llamadas, bloqueo de pantalla o cambio de app ocultan la página.
     // No se promete escucha en segundo plano: se pausa.
     const hide = () => {
-      if (document.visibilityState === "hidden" && statusRef.current === "escuchando") pauseInBackground(id);
+      if (document.visibilityState === "hidden" && !realVoice.current && statusRef.current === "escuchando") pauseInBackground(id);
     };
     const pagehide = () => {
-      if (statusRef.current === "escuchando") pauseInBackground(id);
+      if (!realVoice.current && statusRef.current === "escuchando") pauseInBackground(id);
     };
     document.addEventListener("visibilitychange", hide);
     window.addEventListener("pagehide", pagehide);
@@ -69,6 +71,7 @@ export function useInterview(id: string, onDeleted: () => void) {
 
   const apply = useCallback((s: InterviewSnapshot) => {
     statusRef.current = s.status;
+    realVoice.current = s.transcription === "deepgram";
     setSnap(s);
   }, []);
 

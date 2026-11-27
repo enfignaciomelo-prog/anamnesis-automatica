@@ -16,14 +16,16 @@ export class HttpError extends Error {
 
 export const MAX_JSON_BYTES = 64 * 1024;
 
-export async function readRaw(req: IncomingMessage, limit: number): Promise<Buffer> {
+export async function readRaw(
+  req: IncomingMessage, limit: number, tooLarge = "El archivo supera el tamaño máximo (5 MB).",
+): Promise<Buffer> {
   const declared = Number(req.headers["content-length"] ?? 0);
-  if (declared > limit) throw new HttpError(413, "muy_grande", "El archivo supera el tamaño máximo (5 MB).");
+  if (declared > limit) throw new HttpError(413, "muy_grande", tooLarge);
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const c of req) {
     size += (c as Buffer).length;
-    if (size > limit) throw new HttpError(413, "muy_grande", "El archivo supera el tamaño máximo (5 MB).");
+    if (size > limit) throw new HttpError(413, "muy_grande", tooLarge);
     chunks.push(c as Buffer);
   }
   if (!size) throw new HttpError(400, "vacio", "El archivo está vacío.");

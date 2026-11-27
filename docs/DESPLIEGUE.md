@@ -59,7 +59,8 @@ configurado, usa el modo demostración.
 | `BETTER_AUTH_URL` | cuentas | URL pública https del servicio |
 | `RESEND_API_KEY` | cuentas | Clave de Resend |
 | `EMAIL_FROM` | cuentas | Remitente permitido por Resend |
-| `DEEPGRAM_API_KEY` | etapa 4 del nuevo orden | Aún no se usa |
+| `TRANSCRIPTION_MODE` | ambos | `demo` por defecto. Para activar el micrófono con cuentas, usa `deepgram` |
+| `DEEPGRAM_API_KEY` | cuentas con micrófono | Clave de Deepgram, solo en el panel del servidor |
 | `ANTHROPIC_API_KEY` | etapa 5 del nuevo orden | Aún no se usa |
 
 Variables solo para pruebas (nunca en Render): `EMAIL_TRANSPORT=prueba`,
@@ -68,6 +69,31 @@ Variables solo para pruebas (nunca en Render): `EMAIL_TRANSPORT=prueba`,
 
 Opcional: `SESSION_CHECK_MS` (predeterminado 15000): cada cuánto el servidor
 revisa las sesiones con canales en vivo abiertos.
+
+## Probar micrófono y transcripción
+
+En una instancia HTTPS de prueba con cuentas, agrega `DEEPGRAM_API_KEY` y
+`TRANSCRIPTION_MODE=deepgram` en el panel **Environment** del servidor. Usa una
+clave del proyecto de pruebas. El navegador envía PCM mono y el servidor lo
+transmite por WebSocket a Nova-3 con `es-419`. La app conserva el texto y no
+archiva audio. La solicitud usa `mip_opt_out=true`. Revisa las condiciones de
+tratamiento y retención del proyecto de Deepgram por separado.
+
+1. En PC, abre una entrevista, registra consentimiento y acepta el permiso del
+   micrófono. Repite denegando el permiso y comprueba que puedes volver a intentar.
+2. En Safari real de iPhone, repite desde Safari y desde la app agregada a Inicio.
+   Cambia de app o bloquea la pantalla. Verifica la pausa y reanuda de forma
+   explícita. Repite al perder y recuperar la red.
+3. Para evaluar español de Chile, dos personas leen frases ficticias como «Me
+   tinca que fue ayer», «Me duele la guata», «Partió al tiro» y «Tomo losartán
+   cincuenta miligramos». Compara palabras, cifras y hablantes con el guion.
+   Pausa y reanuda entre frases y pronuncia la última justo antes de detener.
+   Registra omisiones, duplicados y cambios de significado. La prueba con un
+   proveedor local comprueba el flujo y el formato; la precisión del servicio
+   se mide con esta prueba externa.
+
+[Modelos e idiomas de Deepgram](https://developers.deepgram.com/docs/models-languages-overview) ·
+[Referencia de streaming](https://developers.deepgram.com/reference/speech-to-text/listen-streaming)
 
 ## Historial y limpieza
 

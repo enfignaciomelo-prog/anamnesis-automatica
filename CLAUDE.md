@@ -83,11 +83,11 @@ borrador de anamnesis según la plantilla seleccionada.
 - **Un solo proceso:** el servidor sirve la API y `dist/` (interfaz compilada).
 - **Tiempo real:** Server-Sent Events (servidor → interfaz, reconexión
   automática, estado completo al reconectar) + POST para comandos. El audio
-  irá por HTTP al servidor y del servidor a Deepgram por WebSocket nativo de
-  Node 22. Ninguna clave llega al navegador.
-- **Deepgram:** Nova-3 tiene modelo de español (`es`, `es-419`) para streaming
-  según su documentación oficial (changelog de agosto 2026). Verificar de nuevo
-  al implementar la etapa 3.
+  viaja por HTTP al servidor y del servidor a Deepgram por WebSocket. Ninguna
+  clave llega al navegador.
+- **Deepgram:** Nova-3 con `es-419` para streaming. Se habilita en modo cuentas
+  con `TRANSCRIPTION_MODE=deepgram` y `DEEPGRAM_API_KEY`. El navegador usa PCM
+  mono mediante AudioWorklet y el servidor transmite sin guardar grabaciones.
 - **Persistencia detrás de la interfaz `Store`** (`server/store.ts`): hoy en
   memoria; PostgreSQL debe implementar la misma interfaz con el dueño en cada consulta.
 - **Extractor intercambiable:** `server/extraction/demoExtractor.ts` (reglas,
@@ -150,7 +150,7 @@ borrador de anamnesis según la plantilla seleccionada.
 1. Cuentas reales y persistencia. ✅ (falta conexión externa)
 2. Vencimiento diario y limpieza local. ✅
 3. Modo offline manual cifrado y sincronización. ✅ (voz/IA offline: ver `docs/VOZ_IA_OFFLINE.md`)
-4. Micrófono y transcripción real.
+4. Micrófono y transcripción real. ✅ código (pendiente prueba con Deepgram y Safari reales).
 5. Llenado con Claude.
 Voz e IA offline: capacidad posterior por evaluar.
 

@@ -6,8 +6,8 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
       </button>
       <h1>Qué datos se usan y dónde</h1>
       <p className="lede">
-        En esta etapa la aplicación funciona en modo demostración: no activa el micrófono y la
-        entrevista es ficticia.
+        La demostración reproduce entrevistas ficticias. En modo cuentas, si se habilita la
+        transcripción en vivo, la aplicación pide consentimiento antes de activar el micrófono.
       </p>
 
       <h2>Por proveedor</h2>
@@ -22,13 +22,13 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
         <tbody>
           <tr>
             <th scope="row">Servidor de la aplicación</th>
-            <td>Transcripción, borrador y decisiones del profesional, en memoria.</td>
-            <td>Activo (demo)</td>
+            <td>Transcripción, borrador y decisiones del profesional. En modo cuentas se guardan en PostgreSQL.</td>
+            <td>Activo</td>
           </tr>
           <tr>
             <th scope="row">Deepgram (transcripción)</th>
             <td>El audio de la entrevista, en tiempo real, para convertirlo en texto.</td>
-            <td>Pendiente. Hoy no recibe nada.</td>
+            <td>Disponible en modo cuentas cuando se habilita la transcripción en vivo.</td>
           </tr>
           <tr>
             <th scope="row">Claude de Anthropic (extracción)</th>
@@ -50,7 +50,7 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
 
       <h2>Compromisos</h2>
       <ul className="plain">
-        <li>El audio no se guarda.</li>
+        <li>La aplicación envía el audio a Deepgram y no guarda grabaciones. Solicita excluir ese audio del programa de mejora de modelos del proveedor.</li>
         <li>
           El navegador no guarda datos clínicos: se mantienen en memoria solo mientras usas la app. Única excepción: si
           preparas el dispositivo para trabajar sin conexión, los borradores que escribas se guardan cifrados con tu frase

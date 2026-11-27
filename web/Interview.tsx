@@ -11,9 +11,10 @@ import {
   type SpeakerRole,
   type TemplateField,
 } from "../shared/types";
-import { api, ApiError } from "./api";
+import { api, ApiError, pauseInBackground } from "./api";
 import { DemoNotice, SaveIndicator, STATUS_TEXT } from "./App";
-import { registerFlush } from "./session";
+import { Microphone } from "./microphone";
+import { onEnd, registerFlush } from "./session";
 import { type Connection, useInterview } from "./useInterview";
 
 type Tab = "entrevista" | "anamnesis" | "finalizar";
@@ -31,6 +32,43 @@ export function InterviewScreen({
   const [tab, setTab] = useState<Tab>("entrevista");
   const [error, setError] = useState<string | null>(null);
   const [consentOpen, setConsentOpen] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const microphone = useRef<Microphone | null>(null);
+
+  useEffect(() => {
+    const stop = () => {
+      const current = microphone.current;
+      microphone.current = null;
+      current?.stop();
+      return current;
+    };
+    const hide = () => {
+      if (document.visibilityState === "hidden") suspend();
+    };
+    const suspend = () => {
+      const capture = stop();
+      if (capture) pauseInBackground(id, capture.id);
+    };
+    const unregister = onEnd(stop);
+    document.addEventListener("visibilitychange", hide);
+    window.addEventListener("pagehide", suspend);
+    window.addEventListener("offline", suspend);
+    return () => {
+      unregister();
+      suspend();
+      document.removeEventListener("visibilitychange", hide);
+      window.removeEventListener("pagehide", suspend);
+      window.removeEventListener("offline", suspend);
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (snap?.status === "detenida" || snap?.status === "finalizada" ||
+        (snap?.status === "pausada" && !voiceBusy)) {
+      microphone.current?.stop();
+      microphone.current = null;
+    }
+  }, [snap?.status, voiceBusy]);
   const [highlight, setHighlight] = useState<string | null>(null);
   // Anamnesis escrita a mano (sin conexión): no hay transcripción; se abre en el borrador.
   const manualOpened = useRef(false);
@@ -68,7 +106,68 @@ export function InterviewScreen({
     setTab("entrevista");
   };
 
-  const start = () => (snap.consent ? run(api.command(id, "iniciar")) : setConsentOpen(true));
+  const realVoice = snap.transcription === "deepgram";
+  const listen = async (cmd: "iniciar" | "reanudar", givenBy?: "paciente" | "representante") => {
+    setConsentOpen(false);
+    if (!realVoice) {
+      if (givenBy) {
+        try { await api.consent(id, givenBy); }
+        catch (e) { setError((e as Error).message); return; }
+      }
+      await run(api.command(id, cmd));
+      return;
+    }
+    if (microphone.current) return;
+    let capture: Microphone | undefined;
+    try {
+      setVoiceBusy(true);
+      setError(null);
+      capture = new Microphone(id, (message) => {
+        if (microphone.current !== capture) return;
+        microphone.current = null;
+        setError(message);
+        void api.command(id, "pausar", "microfono").then(apply, () => undefined);
+      });
+      microphone.current = capture;
+      await capture.prepare(givenBy ? () => api.consent(id, givenBy) : undefined);
+      if (microphone.current !== capture) return;
+      const next = await api.command(id, cmd, undefined, { captureId: capture.id, sampleRate: capture.rate });
+      if (microphone.current !== capture) {
+        pauseInBackground(id, capture.id);
+        return;
+      }
+      apply(next);
+      if (next.status === "escuchando") capture.start();
+    } catch (e) {
+      capture?.stop();
+      if (microphone.current === capture) microphone.current = null;
+      const err = e as Error;
+      if (err.name === "NotAllowedError") setError("Permite el micrófono en el navegador para comenzar.");
+      else if (err.name === "NotFoundError" || err.name === "NotReadableError") setError("El micrófono no está disponible.");
+      else if (err.name !== "CancelledError") setError(err.message || "No se pudo activar el micrófono.");
+    } finally {
+      setVoiceBusy(false);
+    }
+  };
+
+  const endListen = async (cmd: "pausar" | "detener") => {
+    if (!realVoice) return run(api.command(id, cmd));
+    setVoiceBusy(true);
+    const capture = microphone.current;
+    try {
+      const complete = await capture?.finish();
+      if (capture && microphone.current !== capture) return;
+      microphone.current = null;
+      await run(api.command(id, cmd, complete === false ? "audio_incompleto" : undefined));
+    } finally {
+      setVoiceBusy(false);
+    }
+  };
+
+  const start = () => {
+    if (snap.consent && (!realVoice || snap.consent.transcription === "deepgram")) void listen("iniciar");
+    else setConsentOpen(true);
+  };
 
   return (
     <div className="interview">
@@ -84,7 +183,12 @@ export function InterviewScreen({
       </header>
       <h1 className="interview-title">{snap.title}</h1>
       {snap.demo && <DemoNotice />}
+      {!snap.demo && !realVoice && (snap.status === "preparada" || snap.consent) && <p className="muted small">Transcripción de demostración con un guion ficticio.</p>}
+      {realVoice && <p className="muted small">Transcripción en español con Deepgram. Completa y revisa la anamnesis manualmente.</p>}
       {snap.status === "pausada" && snap.pauseReason && <PauseBanner reason={snap.pauseReason} />}
+      {snap.status === "detenida" && snap.pauseReason === "audio_incompleto" && (
+        <p className="banner warn" role="status">Revisa la transcripción. El servicio pudo dejar sin procesar el último audio enviado.</p>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -142,23 +246,17 @@ export function InterviewScreen({
       <ControlBar
         status={snap.status}
         onStart={start}
-        onPause={() => run(api.command(id, "pausar"))}
-        onResume={() => run(api.command(id, "reanudar"))}
-        onStop={() => run(api.command(id, "detener"))}
+        busy={voiceBusy}
+        onPause={() => void endListen("pausar")}
+        onResume={() => void listen("reanudar")}
+        onStop={() => void endListen("detener")}
       />
 
       {consentOpen && (
         <ConsentSheet
           onCancel={() => setConsentOpen(false)}
-          onAccept={(by) =>
-            api.consent(id, by).then(
-              () => {
-                setConsentOpen(false);
-                run(api.command(id, "iniciar"));
-              },
-              (e: ApiError) => setError(e.message),
-            )
-          }
+          realVoice={realVoice}
+          onAccept={(by) => void listen("iniciar", by)}
         />
       )}
     </div>
@@ -190,7 +288,11 @@ function PauseBanner({ reason }: { reason: string }) {
       ? "La escucha se pausó porque la app dejó de estar en pantalla (por ejemplo, una llamada o el bloqueo del teléfono). Toca Reanudar para continuar."
       : reason === "conexion"
         ? "La escucha se pausó porque se perdió la conexión. Toca Reanudar cuando vuelva."
-        : "La escucha está pausada.";
+        : reason === "transcripcion" || reason === "microfono"
+          ? "Se interrumpió la captura o el servicio de transcripción. Toca Reanudar para continuar."
+          : reason === "audio_incompleto"
+            ? "La escucha está pausada. Revisa el último fragmento antes de reanudar."
+            : "La escucha está pausada.";
   return (
     <p className="banner" role="status">
       {text}
@@ -199,9 +301,11 @@ function PauseBanner({ reason }: { reason: string }) {
 }
 
 function ConsentSheet({
+  realVoice,
   onAccept,
   onCancel,
 }: {
+  realVoice: boolean;
   onAccept: (by: "paciente" | "representante") => void;
   onCancel: () => void;
 }) {
@@ -214,7 +318,9 @@ function ConsentSheet({
         <p>Antes de activar la escucha, informa a la persona:</p>
         <ul className="plain">
           <li>La conversación se transcribirá para preparar un borrador de anamnesis.</li>
-          <li>El audio no se guarda.</li>
+          {realVoice ? (
+            <li>Enviaremos el audio a Deepgram para transcribirlo. La aplicación guarda el texto en tu cuenta y descarta el audio tras enviarlo.</li>
+          ) : <li>El audio no se guarda.</li>}
           <li>Tú revisarás y confirmarás todo antes de finalizar.</li>
           <li>Puede pedir que se pause o detenga en cualquier momento.</li>
         </ul>
@@ -253,6 +359,7 @@ function ConsentSheet({
 
 function ControlBar(p: {
   status: InterviewSnapshot["status"];
+  busy: boolean;
   onStart: () => void;
   onPause: () => void;
   onResume: () => void;
@@ -262,22 +369,22 @@ function ControlBar(p: {
   return (
     <div className="controlbar" role="toolbar" aria-label="Controles de escucha">
       {p.status === "preparada" && (
-        <button className="btn primary big" onClick={p.onStart}>
+        <button className="btn primary big" disabled={p.busy} onClick={p.onStart}>
           Iniciar escucha
         </button>
       )}
       {p.status === "escuchando" && (
-        <button className="btn big" onClick={p.onPause}>
+        <button className="btn big" disabled={p.busy} onClick={p.onPause}>
           Pausar
         </button>
       )}
       {p.status === "pausada" && (
-        <button className="btn primary big" onClick={p.onResume}>
+        <button className="btn primary big" disabled={p.busy} onClick={p.onResume}>
           Reanudar
         </button>
       )}
       {(p.status === "escuchando" || p.status === "pausada") && (
-        <button className="btn danger big" onClick={p.onStop}>
+        <button className="btn danger big" disabled={p.busy} onClick={p.onStop}>
           Detener
         </button>
       )}
@@ -408,8 +515,10 @@ function Draft({
   return (
     <div className="draft">
       <p className="muted small">
-        Cada propuesta muestra el fragmento que la respalda. Toca un fragmento para verlo en la
-        transcripción. Lo que no se mencionó queda como No referido.
+        {snap.transcription === "deepgram"
+          ? "Completa los campos a partir de la entrevista y confirma los datos que revisaste."
+          : "Cada propuesta muestra el fragmento que la respalda. Toca un fragmento para verlo en la transcripción."}{" "}
+        Lo que no se mencionó queda como No referido.
       </p>
       {snap.template.sections.map((sec) => (
         <section key={sec.id} className="draft-section">
