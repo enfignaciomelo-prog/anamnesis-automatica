@@ -1,8 +1,8 @@
 # Estado de Anamnesis Automática
 
-Última actualización: cuentas, persistencia y corte diario, 26-11-2026.
+Última actualización: modo sin conexión manual cifrado y sincronización, 27-11-2026.
 
-Orden vigente (decisión del responsable): 1) cuentas y persistencia ✅, 2) vencimiento diario y limpieza local ✅, 3) modo offline cifrado y sincronización ⏳, 4) micrófono y transcripción ⏳, 5) llenado con Claude ⏳. Voz e IA offline: capacidad posterior por evaluar.
+Orden vigente (decisión del responsable): 1) cuentas y persistencia ✅, 2) vencimiento diario y limpieza local ✅, 3) modo offline cifrado y sincronización ✅, 4) micrófono y transcripción ⏳, 5) llenado con Claude ⏳. Voz e IA offline: capacidad posterior por evaluar.
 
 **Leyenda:** ✅ Real (funciona de verdad) · 🧪 Simulado (funciona con datos o
 lógica de demostración) · ⏳ Pendiente (no existe aún)
@@ -73,7 +73,7 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Canales en vivo ligados a su sesión | ✅ | El servidor cierra cada canal al llegar el corte (temporizador del servidor), si la sesión se revoca por otra vía (p. ej., cambio de contraseña) o por inactividad, sin esperar otra petición. Cerrar sesión en un dispositivo no cierra los de otro (probado en memoria y PostgreSQL). |
 | TLS con PostgreSQL | ✅ | En producción: TLS obligatorio con verificación del certificado (`DATABASE_CA_CERT`); se rechazan `DATABASE_SSL=disable`, `sslmode` que no verifica y cualquier `rejectUnauthorized:false`. Sin TLS solo para PostgreSQL local de pruebas. |
 | Cookies | ✅ | HttpOnly, SameSite, Secure con HTTPS; verificación de origen en cambios. |
-| Sin datos clínicos en el navegador | ✅ | Sin localStorage, sessionStorage ni IndexedDB; caché solo pública; limpieza de versiones anteriores; `Clear-Site-Data` al cerrar. |
+| Sin datos clínicos en el navegador | ✅ (con una excepción) | Sin localStorage ni sessionStorage; caché solo pública; limpieza de versiones anteriores; `Clear-Site-Data: "cache"` al cerrar. **Excepción explícita:** los borradores manuales sin conexión, cifrados en IndexedDB hasta el corte diario (ver abajo). |
 | Eliminación del historial en el servidor | ✅ | **Desactivada por defecto**: las anamnesis guardadas, incluidas las finalizadas, no se eliminan automáticamente. Solo se activa si el profesional la configura y la confirma (30, 90 o 365 días sin actividad). Independiente de la limpieza local. Botón para eliminar una anamnesis. |
 | Audio no guardado | ✅ | No existe audio todavía; el diseño no lo almacena. |
 | Sin contenido clínico en registros | ✅ | Probado. |
@@ -103,3 +103,21 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
   **Emulación en Chromium** con tamaño de iPhone y computador; no son pruebas en Safari real.
 - Archivos de prueba ficticios en `tests/fixtures` (`npm run fixtures` los regenera).
 - La CI de GitHub ejecuta tipos, pruebas, compilación con Vite y E2E en cada push y PR.
+
+## Modo sin conexión manual (etapa 3 del orden vigente)
+
+| Función | Estado | Detalle |
+|---|---|---|
+| Preparar el dispositivo | ✅ | Con conexión y sesión: descarga las plantillas y el corte de la sesión; el profesional elige una frase de desbloqueo (mín. 10 caracteres, distinta de la contraseña). |
+| Escribir anamnesis a mano sin conexión | ✅ | Sin micrófono ni propuestas. Lo escrito queda como edición del profesional; lo vacío, «No referido». |
+| Cifrado en el dispositivo | ✅ | Web Crypto: PBKDF2-SHA-256 (600.000 iteraciones) envuelve una clave AES-GCM de 256 bits no exportable; cada registro con IV propio y datos asociados. En claro solo: huella del profesional, corte, sal e IV (E2E verifica que no aparecen textos, nombres ni plantillas). |
+| Espacios por profesional | ✅ | Cada profesional tiene su espacio y su frase; otro profesional del mismo dispositivo no lo ve ni lo abre (probado). |
+| Desbloqueo local | ✅ | No contacta al servidor ni prolonga la sesión (probado). Se bloquea al ocultar la página, por inactividad, con «Bloquear» y al cerrar sesión. |
+| Estados | ✅ | «Guardado en este dispositivo», «Pendiente de sincronizar», «Sincronizado con tu cuenta», «Error de sincronización». |
+| Sincronización idempotente | ✅ | Identificador del borrador + revisión; reenviar (respuesta perdida, dos pestañas, reinicio del servidor) no crea copias (probado en memoria y PostgreSQL). |
+| Conflictos sin sobrescritura | ✅ | Si la anamnesis se editó, finalizó o eliminó en la cuenta, el servidor responde 409; el dispositivo conserva su copia y el profesional elige: ver, guardar como anamnesis nueva o descartar. |
+| Tras sincronizar | ✅ | Se elimina el contenido del dispositivo; queda solo la referencia. Revisión y finalización en Mis anamnesis. |
+| Corte diario | ✅ / límite | «Los borradores guardados solo en este dispositivo se eliminan en el corte diario, aunque no se hayan sincronizado.» Aviso 5 minutos antes (intenta sincronizar), eliminación al llegar el corte con la app abierta, y al reabrir antes de mostrar nada. También si el reloj del equipo retrocede. Con la app cerrada no se puede borrar en el momento exacto. |
+| Cerrar sesión | ✅ | Conserva los borradores cifrados hasta el corte (para no perder trabajo hecho sin conexión); se pueden eliminar a mano. |
+| Abrir la app sin conexión | ✅ | El service worker precarga la app; sin servidor se ofrece desbloquear los borradores del dispositivo. |
+| Voz e IA sin conexión | ⏳ Evaluación | Ver `docs/VOZ_IA_OFFLINE.md`. No implementado. |

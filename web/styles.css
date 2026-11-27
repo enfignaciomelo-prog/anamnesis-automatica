@@ -908,3 +908,45 @@ input[type="date"] {
   margin: 1.25rem 0 0.25rem;
   font-size: 0.98rem;
 }
+
+/* ---- Modo sin conexión ---- */
+.pill.sync-pendiente {
+  background: #fff4d6;
+  color: #6b4a00;
+}
+.pill.sync-sincronizado {
+  background: #e3f4e8;
+  color: #1d5b32;
+}
+.pill.sync-error {
+  background: #fde4e1;
+  color: #8a1f12;
+}
+.offline-row {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line, #ddd);
+}
+.offline-row .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+.row-btn.static {
+  cursor: default;
+}
+.conflict {
+  background: #fff7f5;
+  border-left: 3px solid #c0392b;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.4rem;
+}
+.link.danger,
+.btn.small.danger {
+  color: #8a1f12;
+}
+.offline-editor textarea {
+  width: 100%;
+  font: inherit;
+  margin-top: 0.25rem;
+}

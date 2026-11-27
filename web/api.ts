@@ -1,3 +1,4 @@
+import type { OfflinePackage, OfflineSyncRequest } from "../shared/offline";
 import type {
   ImportAnalysis,
   InterviewSnapshot,
@@ -137,6 +138,25 @@ export const api = {
   notReported: (id: string, fieldId: string) =>
     save<InterviewSnapshot>("POST", `/api/interviews/${id}/fields/${fieldId}/no-referido`, {}),
   finalize: (id: string, attested: boolean) => save<InterviewSnapshot>("POST", `/api/interviews/${id}/finalize`, { attested }),
+};
+
+// ---- Modo sin conexión ----
+
+export const offlineApi = {
+  package: () => call<OfflinePackage>("GET", "/api/offline/package"),
+  /** Envío de un borrador. Lanza si no hay conexión; devuelve el estado HTTP para conflictos. */
+  send: async (body: OfflineSyncRequest) => {
+    const g = currentGeneration();
+    const res = await raw("/api/offline/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (g !== currentGeneration()) throw new CancelledError();
+    if (res.ok) noteActivity();
+    return { ok: res.ok, status: res.status, body: data };
+  },
 };
 
 // ---- Cuentas (Better Auth, rutas /api/auth/*) ----

@@ -20,6 +20,7 @@ import { exportDocx, exportPdf, exportText } from "./export/exporters";
 import { HttpError, readJson, readRaw, securityHeaders, sendJson } from "./http";
 import { type Command, InterviewService } from "./interviews";
 import { logError, logEvent, logRequest } from "./log";
+import { OfflineSyncService, parseSyncRequest } from "./offline";
 import { type InterviewFilter, MemoryStore, type Professional, type Store } from "./store";
 import { MAX_UPLOAD_BYTES } from "./templates/safety";
 import { TemplateService } from "./templates/service";
@@ -184,6 +185,7 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
   }
 
   const templates = new TemplateService(store);
+  const offline = new OfflineSyncService(store, service, templates);
   const staticRoot = resolve(config.staticDir);
 
   const isHttps = (req: IncomingMessage) =>
@@ -194,8 +196,10 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
     // Solo esta sesión: otros dispositivos del mismo profesional siguen abiertos.
     await expireSession(s, reason);
     ctx.res.setHeader("Set-Cookie", gate.clearCookies(ctx.https));
-    // El navegador borra cachés y almacenamiento del sitio cuando lo soporta.
-    ctx.res.setHeader("Clear-Site-Data", '"cache", "storage"');
+    // El navegador borra la caché HTTP del sitio. No se usa "storage": borraría los
+    // borradores cifrados sin conexión, que se conservan hasta el corte diario.
+    // El resto del almacenamiento lo limpia la interfaz (web/session.ts).
+    ctx.res.setHeader("Clear-Site-Data", '"cache"');
     logEvent("session_ended", { reason });
   }
 
@@ -336,6 +340,24 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
       }
       await store.upsertProfessional(p);
       return sendJson(res, 200, sessionInfo({ ...a, professional: p, idleUntil: now() + p.idleMinutes * 60_000 }));
+    }
+
+    // Modo sin conexión manual: paquete para preparar el dispositivo y sincronización idempotente.
+    if (parts[1] === "offline") {
+      const a = await requireAuth(ctx);
+      if (parts[2] === "package" && m === "GET") {
+        ctx.route = "/api/offline/package";
+        return sendJson(
+          res,
+          200,
+          await offline.package({ id: a.professional.id, name: a.session.user.name }, a.cutoffAt, now()),
+        );
+      }
+      if (parts[2] === "sync" && m === "POST") {
+        ctx.route = "/api/offline/sync";
+        const body = await readJson(req, 512 * 1024);
+        return sendJson(res, 200, await offline.sync(a.professional.id, parseSyncRequest(body)));
+      }
     }
 
     if (parts[1] === "templates") {
@@ -539,7 +561,7 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
       else serveStatic(ctx);
     } catch (err) {
       if (err instanceof HttpError) {
-        if (!res.headersSent) sendJson(res, err.status, { error: err.code, message: err.userMessage });
+        if (!res.headersSent) sendJson(res, err.status, { ...err.extra, error: err.code, message: err.userMessage });
         else res.end();
       } else {
         logError(ctx.route, err);

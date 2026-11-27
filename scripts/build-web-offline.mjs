@@ -41,6 +41,7 @@ const version = createHash("sha256")
   .update(readdirSync(`${out}/assets`).sort().join("|"))
   .digest("hex")
   .slice(0, 12);
-const sw = readFileSync(`${out}/sw.js`, "utf8").replace("__BUILD_VERSION__", version);
+const list = readdirSync(`${out}/assets`).sort().map((f) => JSON.stringify(`/assets/${f}`)).join(",");
+const sw = readFileSync(`${out}/sw.js`, "utf8").replace("__BUILD_VERSION__", version).replace("/*__ASSETS__*/", list);
 writeFileSync(`${out}/sw.js`, sw);
 console.log(`Interfaz compilada en ${out}/ (${js}, ${css ?? "sin css"}, sw ${version})`);

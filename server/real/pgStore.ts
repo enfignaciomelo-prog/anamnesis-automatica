@@ -9,6 +9,7 @@ import type {
   FileRecord,
   InterviewFilter,
   InterviewRecord,
+  OfflineLink,
   PendingImport,
   Professional,
   Store,
@@ -283,6 +284,25 @@ export class PgStore implements Store {
 
   async deleteImport(ownerId: string, id: string) {
     await this.pool.query("DELETE FROM pending_imports WHERE id = $1 AND owner_id = $2", [id, ownerId]);
+  }
+
+  async getOfflineLink(ownerId: string, clientId: string): Promise<OfflineLink | undefined> {
+    const { rows } = await this.pool.query(
+      "SELECT interview_id, revision, content_hash FROM offline_sync WHERE owner_id = $1 AND client_id = $2",
+      [ownerId, clientId],
+    );
+    const r = rows[0];
+    return r ? { ownerId, clientId, interviewId: r.interview_id, revision: r.revision, contentHash: r.content_hash } : undefined;
+  }
+
+  async saveOfflineLink(l: OfflineLink) {
+    await this.pool.query(
+      `INSERT INTO offline_sync (owner_id, client_id, interview_id, revision, content_hash, updated_at)
+       VALUES ($1, $2, $3, $4, $5, now())
+       ON CONFLICT (owner_id, client_id) DO UPDATE SET interview_id = $3, revision = $4, content_hash = $5, updated_at = now()
+       WHERE offline_sync.owner_id = $1`,
+      [l.ownerId, l.clientId, l.interviewId, l.revision, l.contentHash],
+    );
   }
 
   async getActivity(sessionId: string) {

@@ -182,6 +182,21 @@ export class TemplateService {
     return this.toTemplate(await this.own(ownerId, id));
   }
 
+  /** Versión exacta (borradores sin conexión): nunca se usan secciones enviadas por el navegador. */
+  async resolveVersion(ownerId: string, id: string, version: number): Promise<Template> {
+    if (id === GENERIC_TEMPLATE.id) {
+      if (version !== GENERIC_TEMPLATE.version) throw new HttpError(404, "version", "Esa versión no existe.");
+      return structuredClone(GENERIC_TEMPLATE);
+    }
+    return this.toTemplate(await this.own(ownerId, id), version);
+  }
+
+  /** Última versión de todas las plantillas disponibles (paquete sin conexión). */
+  async allCurrent(ownerId: string): Promise<Template[]> {
+    const own = await this.store.listTemplates(ownerId);
+    return [structuredClone(GENERIC_TEMPLATE), ...own.map((t) => this.toTemplate(t))];
+  }
+
   async create(ownerId: string, body: unknown, fromId?: string): Promise<TemplateDetail> {
     let input: TemplateInput;
     let source: TemplateRecord["source"];

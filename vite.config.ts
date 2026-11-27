@@ -11,7 +11,8 @@ function swVersion(): Plugin {
     closeBundle() {
       const assets = readdirSync("dist/assets").sort().join("|");
       const v = createHash("sha256").update(assets).digest("hex").slice(0, 12);
-      const sw = readFileSync("dist/sw.js", "utf8").replace("__BUILD_VERSION__", v);
+      const list = readdirSync("dist/assets").sort().map((f) => JSON.stringify(`/assets/${f}`)).join(",");
+      const sw = readFileSync("dist/sw.js", "utf8").replace("__BUILD_VERSION__", v).replace("/*__ASSETS__*/", list);
       writeFileSync("dist/sw.js", sw);
     },
   };

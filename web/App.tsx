@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import type { ImportAnalysis, InterviewSummary, SessionInfo, TemplateSummary } from "../shared/types";
 import { accounts, api, ApiError, type ListFilter } from "./api";
 import { InterviewScreen } from "./Interview";
+import { backend, useVault } from "./offline/current";
+import { OfflineGate, OfflinePanel, OfflineWorkspace } from "./offline/OfflineScreens";
+import { purgeExpired } from "./offline/vault";
 import { PrivacyScreen } from "./Privacy";
 import {
   clearLocalData,
@@ -16,12 +19,14 @@ type View =
   | { name: "home" }
   | { name: "interview"; id: string }
   | { name: "privacy" }
+  | { name: "offline" }
   | { name: "templates" }
   | { name: "template"; id: string }
   | { name: "import"; analysis: ImportAnalysis };
 
 const EXIT_MESSAGES: Record<string, string> = {
-  manual: "Cerraste la sesión. Los datos temporales de este dispositivo se limpiaron.",
+  manual:
+    "Cerraste la sesión. Los datos temporales de este dispositivo se limpiaron. Los borradores sin conexión siguen cifrados hasta el corte diario.",
   sesion_vencida: "La sesión venció en el corte diario de las 23:59 (hora de Chile). Se limpiaron los datos temporales.",
   corte_diario: "La sesión venció en el corte diario de las 23:59 (hora de Chile). Se limpiaron los datos temporales.",
   vencimiento: "La sesión venció. Se limpiaron los datos temporales de este dispositivo.",
@@ -35,6 +40,8 @@ export function App() {
   const [session, setSession] = useState<SessionInfo | null | undefined>(undefined);
   const [authMode, setAuthMode] = useState<"demo" | "cuentas">("demo");
   const [view, setView] = useState<View>({ name: "home" });
+  const [offlineBoot, setOfflineBoot] = useState(false);
+  const vault = useVault();
   const params = new URLSearchParams(location.search);
   const exitReason = params.get("salida");
   const resetToken = location.pathname === "/restablecer" ? params.get("token") : null;
@@ -43,17 +50,23 @@ export function App() {
   useEffect(() => {
     // Antes de mostrar datos clínicos se comprueba la sesión con el servidor.
     api.health().then((h) => setAuthMode(h.auth), () => undefined);
-    api.session().then(
-      (s) => {
-        setSessionClock(s);
-        setSession(s);
-      },
-      () => {
-        // Sin sesión válida: se limpia lo que haya quedado de usos o versiones anteriores.
-        void clearLocalData();
-        setSession(null);
-      },
-    );
+    // Primero se eliminan los borradores sin conexión vencidos (corte diario).
+    void purgeExpired(backend)
+      .catch(() => undefined)
+      .then(() => api.session())
+      .then(
+        (s) => {
+          setSessionClock(s);
+          setSession(s);
+        },
+        (e: ApiError) => {
+          // Sin sesión válida: se limpia lo que haya quedado de usos o versiones anteriores.
+          void clearLocalData();
+          // Sin conexión con el servidor: se ofrecen los borradores cifrados del dispositivo.
+          if (e?.status === 0) setOfflineBoot(true);
+          setSession(null);
+        },
+      );
   }, []);
 
   useEffect(() => {
@@ -73,6 +86,17 @@ export function App() {
   if (view.name === "privacy") return <PrivacyScreen onBack={() => setView({ name: "home" })} />;
   if (!session) {
     if (resetToken || resetError) return <ResetPassword token={resetToken} error={resetError} />;
+    if (offlineBoot || view.name === "offline")
+      return (
+        <OfflineGate
+          reason={offlineBoot ? "sin_conexion" : "manual"}
+          onBack={
+            offlineBoot
+              ? () => location.reload()
+              : () => setView({ name: "home" })
+          }
+        />
+      );
     return (
       <Welcome
         authMode={authMode}
@@ -85,6 +109,7 @@ export function App() {
               : null
         }
         onPrivacy={() => setView({ name: "privacy" })}
+        onOffline={() => setView({ name: "offline" })}
       />
     );
   }
@@ -94,6 +119,17 @@ export function App() {
       {content}
     </>
   );
+  // Bloqueados (inactividad, corte, otra pestaña): se vuelve a «Mis anamnesis».
+  if (view.name === "offline" && vault) {
+    return shell(
+      <OfflineWorkspace
+        vault={vault}
+        session={session}
+        onExit={() => setView({ name: "home" })}
+        onOpenInterview={(id) => setView({ name: "interview", id })}
+      />,
+    );
+  }
   if (view.name === "interview")
     return shell(<InterviewScreen id={view.id} session={session} onExit={() => setView({ name: "home" })} />);
   if (view.name === "templates")
@@ -121,6 +157,7 @@ export function App() {
       onOpen={(id) => setView({ name: "interview", id })}
       onPrivacy={() => setView({ name: "privacy" })}
       onTemplates={() => setView({ name: "templates" })}
+      onOffline={() => setView({ name: "offline" })}
     />,
   );
 }
@@ -163,13 +200,19 @@ function Welcome({
   authMode,
   onLogin,
   onPrivacy,
+  onOffline,
   notice,
 }: {
   authMode: "demo" | "cuentas";
   onLogin: (s: SessionInfo) => void;
   onPrivacy: () => void;
+  onOffline: () => void;
   notice: string | null;
 }) {
+  const [hasOffline, setHasOffline] = useState(false);
+  useEffect(() => {
+    backend.listSpaces().then((s) => setHasOffline(s.length > 0), () => undefined);
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(notice);
   const [mode, setMode] = useState<"entrar" | "crear" | "recuperar">("entrar");
@@ -310,6 +353,11 @@ function Welcome({
           {error}
         </p>
       )}
+      {hasOffline && (
+        <button className="btn wide-secondary" onClick={onOffline}>
+          Borradores sin conexión de este dispositivo
+        </button>
+      )}
       <button className="link" onClick={onPrivacy}>
         Qué datos se usan y dónde
       </button>
@@ -373,12 +421,14 @@ function Home({
   onOpen,
   onPrivacy,
   onTemplates,
+  onOffline,
 }: {
   session: SessionInfo;
   onSession: (s: SessionInfo | null) => void;
   onOpen: (id: string) => void;
   onPrivacy: () => void;
   onTemplates: () => void;
+  onOffline: () => void;
 }) {
   const [list, setList] = useState<InterviewSummary[] | null>(null);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
@@ -480,6 +530,8 @@ function Home({
           </ul>
         )}
       </section>
+
+      <OfflinePanel session={session} onOpen={onOffline} />
 
       <section className="panel" aria-labelledby="config">
         <h2 id="config">Configuración</h2>

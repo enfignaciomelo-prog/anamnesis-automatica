@@ -387,6 +387,42 @@ export class InterviewService {
     logEvent("interview_deleted");
   }
 
+  // ---- Borradores escritos sin conexión ----
+
+  /** Crea una anamnesis manual (sin escucha) a partir de un borrador del dispositivo. */
+  async createManual(ownerId: string, template: Template, prof: InterviewRecord["prof"], createdAt: number) {
+    const when = new Intl.DateTimeFormat("es-CL", {
+      timeZone: "America/Santiago",
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(createdAt));
+    const r = await this.store.createInterview(ownerId, template, `Anamnesis sin conexión, ${when}`);
+    r.status = "detenida";
+    r.prof = prof;
+    await this.commit(r);
+    logEvent("interview_created_offline");
+    return r;
+  }
+
+  /** Registro actual (en memoria o guardado), o undefined si no existe para este dueño. */
+  async find(ownerId: string, id: string) {
+    try {
+      return await this.get(ownerId, id);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Reemplaza el texto del profesional con el de una revisión posterior del mismo borrador. */
+  async replaceManual(r: InterviewRecord, prof: InterviewRecord["prof"]) {
+    this.requireEditable(r);
+    r.prof = prof;
+    await this.commit(r);
+    return r;
+  }
+
   /** Elimina entrevistas vencidas según la retención de cada profesional. */
   async sweep() {
     for (const id of await this.store.sweep(Date.now())) {

@@ -67,7 +67,8 @@ describe("corte diario en el servidor", () => {
     const r = await c.json("GET", "/api/interviews");
     assert.equal(r.status, 401);
     assert.equal(r.body.error, "sesion_vencida");
-    assert.match(c.lastHeaders.get("clear-site-data") ?? "", /storage/);
+    // "storage" borraría los borradores cifrados sin conexión (se conservan hasta el corte).
+    assert.equal(c.lastHeaders.get("clear-site-data"), '"cache"');
     // La sesión quedó revocada: no sirve aunque se reenvíe la cookie anterior.
     const again = await c.json("GET", "/api/session");
     assert.equal(again.body.error, "sin_sesion");

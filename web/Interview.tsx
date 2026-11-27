@@ -32,6 +32,14 @@ export function InterviewScreen({
   const [error, setError] = useState<string | null>(null);
   const [consentOpen, setConsentOpen] = useState(false);
   const [highlight, setHighlight] = useState<string | null>(null);
+  // Anamnesis escrita a mano (sin conexión): no hay transcripción; se abre en el borrador.
+  const manualOpened = useRef(false);
+  useEffect(() => {
+    if (snap && !manualOpened.current) {
+      manualOpened.current = true;
+      if (!snap.segments.length && !snap.consent && snap.status !== "preparada") setTab("anamnesis");
+    }
+  }, [snap]);
 
   const run = (p: Promise<InterviewSnapshot>) =>
     p.then(

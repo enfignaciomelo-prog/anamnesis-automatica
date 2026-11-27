@@ -6,7 +6,9 @@
  * - Cada petición pertenece a una «generación» de sesión. Al cerrar o vencer la
  *   sesión, la generación cambia: las peticiones pendientes se cancelan y una
  *   respuesta tardía se descarta en vez de volver a mostrar datos.
- * - Los datos clínicos viven solo en memoria. La limpieza termina reemplazando
+ * - Los datos clínicos viven solo en memoria, con una excepción explícita: los
+ *   borradores manuales sin conexión, cifrados, que se conservan al cerrar sesión
+ *   y se eliminan en el corte diario (web/offline/vault.ts). La limpieza termina reemplazando
  *   la página (location.replace), que descarta toda la memoria y evita que
  *   «Atrás» muestre la pantalla anterior.
  * - No se promete borrado puntual con la aplicación cerrada: al reabrirla se
@@ -14,6 +16,8 @@
  */
 import { useSyncExternalStore } from "react";
 import type { SessionInfo } from "../shared/types";
+import { IdbBackend, OFFLINE_DB } from "./offline/idb";
+import { purgeExpired } from "./offline/vault";
 
 export class CancelledError extends Error {
   constructor() {
@@ -208,7 +212,11 @@ export async function endSession(reason: string, broadcast: boolean, callServer 
   location.replace(`/?salida=${encodeURIComponent(reason)}`);
 }
 
-/** Borra almacenamiento local (incluido el de versiones anteriores) y cachés no públicas. */
+/**
+ * Borra almacenamiento local (incluido el de versiones anteriores) y cachés no públicas.
+ * Conserva solo la base de borradores cifrados sin conexión, de la que elimina
+ * los espacios vencidos (corte diario).
+ */
 export async function clearLocalData() {
   try {
     localStorage.clear();
@@ -222,12 +230,17 @@ export async function clearLocalData() {
       dbs.map(
         (d) =>
           new Promise<void>((done) => {
-            if (!d.name) return done();
+            if (!d.name || d.name === OFFLINE_DB) return done();
             const r = indexedDB.deleteDatabase(d.name);
             r.onsuccess = r.onerror = r.onblocked = () => done();
           }),
       ),
     );
+  } catch {
+    /* sin IndexedDB */
+  }
+  try {
+    await purgeExpired(new IdbBackend());
   } catch {
     /* sin IndexedDB */
   }
