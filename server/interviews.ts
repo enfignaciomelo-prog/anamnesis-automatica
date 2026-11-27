@@ -265,9 +265,10 @@ export class InterviewService {
         source.start();
       } else {
         let incomplete = false;
-        if (src instanceof DeepgramSource && (cmd === "pausar" || cmd === "detener") && !reason && r.status === "escuchando") {
+        if (src instanceof DeepgramSource && (cmd === "pausar" || cmd === "detener") &&
+            (!reason || reason === "audio_incompleto") && r.status === "escuchando") {
           this.finishing.add(id);
-          try { incomplete = !(await src.finish()); }
+          try { incomplete = !(await src.finish()) || reason === "audio_incompleto"; }
           finally { this.finishing.delete(id); }
           // El cierre de sesión pudo suspender la captura mientras se vaciaba.
           if (r.status !== "escuchando" || !this.listeners.has(id)) return this.snapshot(r);

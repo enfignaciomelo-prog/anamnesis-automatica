@@ -46,6 +46,7 @@ it("la captura exige consentimiento y su sesión, deduplica y conserva el últim
   assert.equal((await req(cookie, path + "/consent", { givenBy: "paciente" })).status, 200);
   assert.equal((await command("iniciar")).status, 200);
   assert.equal((await audio(observer, first, 0)).status, 409);
+  assert.equal((await req(cookie, `${path}/audio?captura=${first}&secuencia=0`, new Uint8Array(65538))).status, 413);
   assert.equal((await audio(cookie, first, 0)).status, 200);
   assert.equal((await audio(cookie, first, 0)).status, 200);
   assert.equal((await command("pausar")).status, 200);
@@ -64,9 +65,10 @@ it("la captura exige consentimiento y su sesión, deduplica y conserva el últim
     command: "pausar", reason: "segundo_plano", captureId: first,
   })).status, 409);
   assert.equal((await audio(cookie, second, 0)).status, 200);
-  assert.equal((await command("detener", second)).status, 200);
+  assert.equal((await req(cookie, path + "/command", { command: "detener", reason: "audio_incompleto" })).status, 200);
   const stopped = await snapshot();
   assert.equal(stopped.status, "detenida");
+  assert.equal(stopped.pauseReason, "audio_incompleto");
   assert.ok(stopped.segments[3].start >= paused.segments[2].end);
   assert.notEqual(stopped.segments[3].speaker, paused.segments[0].speaker);
 

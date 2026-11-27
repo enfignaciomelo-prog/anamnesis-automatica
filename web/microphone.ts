@@ -11,6 +11,7 @@ export class Microphone {
   private sequence = 0;
   private closing = false;
   private dead = false;
+  private incomplete = false;
 
   constructor(private interviewId: string, private onInterrupt: (text: string) => void) {
     if (!navigator.mediaDevices?.getUserMedia || !window.AudioContext)
@@ -82,13 +83,16 @@ export class Microphone {
   }
 
   async finish() {
-    if (this.dead) return;
+    if (this.dead) return !this.incomplete;
     this.closing = true;
     this.stream?.getTracks().forEach((track) => track.stop());
     const node = this.worklet;
     if (node) {
       await new Promise<void>((resolve) => {
-        const timer = window.setTimeout(resolve, 150);
+        const timer = window.setTimeout(() => {
+          this.incomplete = true;
+          resolve();
+        }, 150);
         node.port.onmessage = ({ data }: MessageEvent<ArrayBuffer | null>) => {
           if (data) this.enqueue(data);
           else {
@@ -101,6 +105,7 @@ export class Microphone {
     }
     await this.queue;
     this.stop();
+    return !this.incomplete;
   }
 
   stop() {
@@ -115,6 +120,7 @@ export class Microphone {
 
   private interrupt(message: string) {
     if (this.dead) return;
+    this.incomplete = true;
     this.stop();
     if (!this.closing) this.onInterrupt(message);
   }

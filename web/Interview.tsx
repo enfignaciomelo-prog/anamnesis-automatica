@@ -155,9 +155,10 @@ export function InterviewScreen({
     setVoiceBusy(true);
     const capture = microphone.current;
     try {
-      await capture?.finish();
-      if (microphone.current === capture) microphone.current = null;
-      await run(api.command(id, cmd));
+      const complete = await capture?.finish();
+      if (capture && microphone.current !== capture) return;
+      microphone.current = null;
+      await run(api.command(id, cmd, complete === false ? "audio_incompleto" : undefined));
     } finally {
       setVoiceBusy(false);
     }

@@ -445,7 +445,7 @@ export function createApp(config: Config, deps: AppDeps = {}): App {
           const sequence = url.searchParams.get("secuencia") ?? "";
           if (!/^[0-9a-f-]{36}$/i.test(capture) || !/^\d{1,9}$/.test(sequence))
             throw new HttpError(400, "captura_invalida", "Los datos de la captura no son válidos.");
-          const pcm = await readRaw(req, MAX_AUDIO_BYTES);
+          const pcm = await readRaw(req, MAX_AUDIO_BYTES, "El fragmento de audio supera 64 KB.");
           if (pcm.length % 2) throw new HttpError(400, "audio_invalido", "El audio PCM no es válido.");
           if (now() >= authed.cutoffAt || !(await gate.isActive(authed.session.sessionId)))
             throw new HttpError(401, "sin_sesion", "Inicia sesión para continuar.");
