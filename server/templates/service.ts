@@ -335,6 +335,10 @@ export class TemplateService {
     const prefix = snap.demo ? "[DEMO] " : "";
     const mapped = allFields(snap.template).filter((f) => f.target);
     if (src.kind === "xlsx") {
+      // Dos campos en la misma celda se sobrescribirían aunque ambos se
+      // contaran como escritos.
+      const distinct = new Set(mapped.map((f) => targetKey(f.target!)));
+      requireCompleteExport(distinct.size, mapped.length);
       const res = await fillXlsx(
         zip,
         mapped

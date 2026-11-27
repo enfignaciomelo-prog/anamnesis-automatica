@@ -125,6 +125,16 @@ describe("importación segura", () => {
     assert.equal(r.body.error, "archivo_complejo");
   });
 
+  it("rechaza un documento cuyo tamaño expandido supera el presupuesto", async () => {
+    const c = await login("demo-a");
+    const zip = await JSZip.loadAsync(fx("ficha-demo.docx"));
+    zip.file("word/document.xml", " ".repeat(40 * 1024 * 1024 + 1));
+    const bytes = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+    const r = await c.upload("documento-grande.docx", bytes);
+    assert.equal(r.status, 422);
+    assert.equal(r.body.error, "archivo_grande");
+  });
+
   it("rechaza archivos de más de 5 MB", async () => {
     const c = await login("demo-a");
     const big = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(5 * 1024 * 1024 + 10)]);
@@ -218,7 +228,7 @@ describe("Word con marcadores y etiquetas", () => {
     const original = await c.req("GET", path + "original");
     assert.equal(original.status, 409);
     assert.equal(original.headers.get("content-disposition"), null);
-    const error = await original.json();
+    const error = (await original.json()) as { error: string; message: string };
     assert.equal(error.error, "exportacion_incompleta");
     assert.match(error.message, /formato estándar/);
     const standard = await c.req("GET", path + "docx");
@@ -290,6 +300,25 @@ describe("Excel con hoja y celda", () => {
     const sheet2 = await zip.file("xl/worksheets/sheet2.xml")!.async("string");
     assert.match(sheet2, /<c r="B4"[^>]*t="inlineStr"><is><t xml:space="preserve">\[DEMO\] Responde «Una vez al mes»/);
   });
+  it("bloquea la descarga si dos campos mapeados apuntan a la misma celda", async () => {
+    const c = await login("demo-b");
+    const { body: a } = await c.upload("ficha-demo.xlsx", fx("ficha-demo.xlsx"));
+    const body = bodyFrom(a);
+    const fields = body.sections.flatMap((s) => s.fields);
+    fields[1].target = fields[0].target;
+    const { body: tpl } = await c.json<TemplateDetail>("POST", `/api/templates/import/${a.importId}/confirm`, body);
+    const { body: session } = await c.json<{ professional: { id: string } }>("GET", "/api/session");
+    const { body: snap } = await c.json<InterviewSnapshot>("POST", "/api/interviews", { templateId: tpl.id });
+    const saved = await app.store.getInterview(session.professional.id, snap.id);
+    assert.ok(saved);
+    saved.status = "finalizada";
+    await app.store.saveInterview(saved);
+
+    const r = await c.json("GET", `/api/interviews/${snap.id}/export?format=original`);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error, "exportacion_incompleta");
+  });
+
 });
 
 describe("PDF", () => {

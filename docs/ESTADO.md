@@ -1,6 +1,6 @@
 # Estado de Anamnesis Automática
 
-Última actualización: auditoría de archivos Office y TLS de PostgreSQL, 27-11-2026.
+Última actualización: cuentas, persistencia y corte diario, 26-11-2026.
 
 Orden vigente (decisión del responsable): 1) cuentas y persistencia ✅, 2) vencimiento diario y limpieza local ✅, 3) modo offline cifrado y sincronización ⏳, 4) micrófono y transcripción ⏳, 5) llenado con Claude ⏳. Voz e IA offline: capacidad posterior por evaluar.
 
