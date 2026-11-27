@@ -106,14 +106,53 @@ borrador de anamnesis según la plantilla seleccionada.
 
 - Si el registro npm no está disponible, ejecutar `scripts/link-offline-deps.sh`
   y compilar con `npm run build:web:offline` (esbuild). La CI de GitHub usa
-  `npm install` y Vite.
+  `npm install` y Vite, y ejecuta la integración real con PostgreSQL
+  (`TEST_DATABASE_URL`). Localmente sin `pg`: `npm run typecheck:offline`.
 - Pruebas: `npm test` (node:test) y `npm run test:e2e` (skill webapp-testing).
   El comando del servidor usa `exec` para que no queden procesos ocupando el puerto.
 
+- **Cuentas (decisión del responsable):** Better Auth (correo y contraseña,
+  verificación obligatoria, restablecimiento); PostgreSQL en Supabase São Paulo
+  (sa-east-1); correo con Resend y adaptador de pruebas solo fuera de producción.
+  Nunca desactivar la verificación de correo en producción. Esta infraestructura
+  de pruebas **no** autoriza datos reales del CESFAM.
+- **Identidad:** siempre desde la sesión del servidor; nunca un id enviado por el navegador.
+- **Corte diario:** 23:59:00 America/Santiago (`shared/cutoff.ts`), exigido en el
+  servidor desde el inicio de la sesión; bloqueo por inactividad configurable.
+- **Navegador:** datos clínicos solo en memoria; limpieza al cerrar o vencer,
+  propagada entre pestañas, con descarte de respuestas tardías (`web/session.ts`).
+  La fase de modo offline cifrado será una excepción explícita y documentada.
+- **Modo cuentas:** código en `server/real/` (pg, better-auth); se carga solo con
+  `DEMO_MODE=false`. Migraciones en `server/real/migrations` (esquema `anamnesis`, RLS).
+- **Pruebas:** las E2E son emulación en Chromium con tamaño de iPhone; no
+  presentarlas como pruebas en Safari real.
+- **Historial:** la limpieza local nunca elimina datos del servidor. La
+  eliminación automática del historial está desactivada por defecto y solo se
+  activa con configuración y confirmación explícitas del profesional.
+- **Canales en vivo:** ligados a su sesión; el servidor los cierra al corte, al
+  revocarse la sesión o por inactividad, sin depender del navegador.
+- **Escucha:** pertenece a la sesión que la inició o reanudó; solo esa sesión
+  queda exenta del bloqueo por inactividad y solo su cierre, vencimiento o
+  revocación pausa la escucha (no la de una sesión observadora).
+- **TLS PostgreSQL:** en producción, verificado con `DATABASE_CA_CERT`; prohibido
+  `rejectUnauthorized:false`, `DATABASE_SSL=disable` y `sslmode` sin verificación.
+
+## Orden de trabajo vigente
+
+1. Cuentas reales y persistencia. ✅ (falta conexión externa)
+2. Vencimiento diario y limpieza local. ✅
+3. Modo offline manual cifrado y sincronización.
+4. Micrófono y transcripción real.
+5. Llenado con Claude.
+Voz e IA offline: capacidad posterior por evaluar.
+
 ## Decisiones pendientes (no decidir sin consultar)
 
-- Sistema de autenticación de cuentas reales (etapa 5).
-- Proveedor de PostgreSQL y región de alojamiento de datos.
+- Región del servidor de aplicación (Render no tiene región en Sudamérica).
+- Política institucional de conservación y eliminación del historial (hoy:
+  conservación hasta que el profesional elimine o configure la eliminación).
+- Conector Rayen: después de offline, micrófono y llenado con Claude (se puede
+  investigar antes la opción oficial).
 
 ## Skills del proyecto (`.claude/skills/`)
 

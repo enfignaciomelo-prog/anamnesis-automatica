@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.server.json",
+  "exclude": ["server/real", "tests/unit/pg.*.test.ts"]
+}

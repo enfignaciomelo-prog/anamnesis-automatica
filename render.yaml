@@ -1,22 +1,39 @@
-# Despliegue HTTPS de demostración en Render (se configura desde Safari:
-# dashboard.render.com → New → Blueprint → elegir este repositorio).
-# NO PROBADO todavía. Modo demostración: sin claves y con datos ficticios.
+# Despliegue HTTPS de pruebas en Render (se configura desde el navegador:
+# dashboard.render.com → New → Blueprint). Ver docs/DESPLIEGUE.md.
+# Predeterminado: modo demostración. Para cuentas reales, completar los secretos
+# en el panel de Render y cambiar DEMO_MODE a "false".
 services:
   - type: web
-    name: anamnesis-automatica-demo
+    name: anamnesis-automatica
     runtime: node
     plan: free
-    # Una sola instancia: el almacenamiento de la demo está en memoria.
+    # Una instancia: el estado en vivo de las entrevistas está en memoria del proceso.
     numInstances: 1
+    region: oregon
     buildCommand: npm install --include=dev --no-audit --no-fund && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: NODE_ENV
+        value: production
       - key: DEMO_MODE
         value: "true"
       - key: TRUST_PROXY
         value: "true"
       - key: STATIC_DIR
         value: dist
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      # Secretos: se ingresan en el panel de Render, nunca en el repositorio.
+      - key: BETTER_AUTH_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_CA_CERT
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

@@ -1,6 +1,11 @@
 /**
  * Ciclo de vida de una entrevista: consentimiento, escucha, propuestas,
  * revisión del profesional y finalización. Toda operación verifica el dueño.
+ *
+ * Persistencia: cada cambio se escribe en el almacenamiento (memoria o
+ * PostgreSQL). Las entrevistas activas (escuchando o con pantallas abiertas)
+ * se mantienen además en memoria del proceso; las escrituras de una misma
+ * entrevista se encadenan para conservar el orden.
  */
 import type { ServerResponse } from "node:http";
 import type {
@@ -12,38 +17,78 @@ import type {
   Template,
 } from "../shared/types";
 import { GENERIC_TEMPLATE, allFields } from "../shared/template-generic";
+import type { AuthSession } from "./auth/types";
 import type { Config } from "./config";
 import { DEMO_SCRIPT } from "./demo/script";
 import { extractDemo } from "./extraction/demoExtractor";
 import { computeFields } from "./extraction/merge";
 import { HttpError } from "./http";
-import { logEvent } from "./log";
-import type { InterviewRecord, Store } from "./store";
+import { logError, logEvent } from "./log";
+import type { InterviewFilter, InterviewRecord, Store } from "./store";
 import { DemoSource } from "./transcription/demoSource";
 import type { TranscriptionSource } from "./transcription/source";
 
 export type Command = "iniciar" | "pausar" | "reanudar" | "detener";
 
 const ROLES: SpeakerRole[] = ["profesional", "paciente", "acompanante", "sin_asignar"];
+const MAX_TEXT = 5000;
 
 export class InterviewService {
   private sources = new Map<string, TranscriptionSource>();
   private subscribers = new Map<string, Set<ServerResponse>>();
   private disconnectTimers = new Map<string, NodeJS.Timeout>();
+  /** Entrevistas activas en este proceso. */
+  private live = new Map<string, InterviewRecord>();
+  private writes = new Map<string, Promise<unknown>>();
+  /** Sesión que inició o reanudó la escucha de cada entrevista (dueña del micrófono). */
+  private listeners = new Map<string, AuthSession>();
 
   constructor(
     private store: Store,
     private config: Config,
   ) {}
 
-  private get(ownerId: string, id: string): InterviewRecord {
-    const r = this.store.getInterview(ownerId, id);
-    if (!r) throw new HttpError(404, "no_encontrada", "La entrevista no existe o fue eliminada.");
+  private async get(ownerId: string, id: string): Promise<InterviewRecord> {
+    const cached = this.live.get(id);
+    if (cached) {
+      if (cached.ownerId !== ownerId) throw notFound();
+      return cached;
+    }
+    const r = await this.store.getInterview(ownerId, id);
+    if (!r) throw notFound();
     return r;
   }
 
-  private touch(r: InterviewRecord) {
+  private retain(r: InterviewRecord) {
+    this.live.set(r.id, r);
+  }
+
+  private releaseIfIdle(id: string) {
+    if (!this.sources.has(id) && !(this.subscribers.get(id)?.size ?? 0)) this.live.delete(id);
+  }
+
+  /** Escribe en orden; el resultado indica si el servidor confirmó el guardado. */
+  private persist(r: InterviewRecord): Promise<boolean> {
+    const snapshot = structuredClone(r);
+    const prev = this.writes.get(r.id) ?? Promise.resolve();
+    const next = prev
+      .catch(() => undefined)
+      .then(() => this.store.saveInterview(snapshot));
+    this.writes.set(r.id, next);
+    return next;
+  }
+
+  private async commit(r: InterviewRecord) {
     r.lastActivity = Date.now();
+    let ok: boolean;
+    try {
+      ok = await this.persist(r);
+    } catch (err) {
+      logError("interview_save", err);
+      throw new HttpError(503, "error_guardado", "No se pudo guardar en el servidor. Intenta de nuevo.");
+    }
+    if (!ok) throw notFound();
+    this.broadcast(r);
   }
 
   private requireEditable(r: InterviewRecord) {
@@ -51,8 +96,8 @@ export class InterviewService {
       throw new HttpError(409, "finalizada", "La entrevista ya fue finalizada y no se puede modificar.");
   }
 
-  create(ownerId: string, template: Template = GENERIC_TEMPLATE): InterviewRecord {
-    const n = this.store.listInterviews(ownerId).length + 1;
+  async create(ownerId: string, template: Template = GENERIC_TEMPLATE): Promise<InterviewRecord> {
+    const n = (await this.store.countInterviews(ownerId)) + 1;
     const when = new Intl.DateTimeFormat("es-CL", {
       timeZone: "America/Santiago",
       day: "2-digit",
@@ -60,8 +105,8 @@ export class InterviewService {
       hour: "2-digit",
       minute: "2-digit",
     }).format(new Date());
-    const title = `${this.config.demo ? "Entrevista demo" : "Entrevista"} ${n} · ${when}`;
-    const r = this.store.createInterview(ownerId, template, title);
+    const title = `${this.config.demo ? "Entrevista demo" : "Anamnesis"} ${n}, ${when}`;
+    const r = await this.store.createInterview(ownerId, template, title);
     logEvent("interview_created");
     return r;
   }
@@ -75,15 +120,16 @@ export class InterviewService {
     return {
       id: r.id,
       createdAt: new Date(r.createdAt).toISOString(),
+      updatedAt: new Date(r.lastActivity).toISOString(),
       status: r.status,
       templateName: `${r.template.name} (v${r.template.version})`,
       title: r.title,
     };
   }
 
-  snapshot(r: InterviewRecord): InterviewSnapshot {
-    const owner = this.store.getProfessional(r.ownerId);
-    const ttl = (owner?.retentionMinutes ?? this.config.retentionDefaultMinutes) * 60_000;
+  async snapshot(r: InterviewRecord): Promise<InterviewSnapshot> {
+    const owner = await this.store.getProfessional(r.ownerId);
+    const days = owner?.historyRetentionDays ?? null;
     return {
       ...this.summary(r),
       template: r.template,
@@ -94,38 +140,74 @@ export class InterviewService {
       pauseReason: r.pauseReason,
       finalizedAt: r.finalizedAt ? new Date(r.finalizedAt).toISOString() : null,
       demo: this.config.demo,
-      expiresAt: new Date(r.lastActivity + ttl).toISOString(),
+      autoDeleteAt: days === null ? null : new Date(r.lastActivity + days * 86_400_000).toISOString(),
     };
   }
 
-  list(ownerId: string) {
-    return this.store.listInterviews(ownerId).map((r) => this.summary(r));
+  async list(ownerId: string, filter?: InterviewFilter) {
+    const rows = await this.store.listInterviews(ownerId, filter);
+    // Lo activo en memoria es más reciente que lo guardado.
+    return rows.map((r) => this.summary(this.live.get(r.id) ?? r));
   }
 
-  read(ownerId: string, id: string) {
-    return this.snapshot(this.get(ownerId, id));
+  async read(ownerId: string, id: string) {
+    return this.snapshot(await this.get(ownerId, id));
   }
 
-  record(ownerId: string, id: string) {
-    return this.get(ownerId, id);
+  /** Solo para pruebas: registro vivo o guardado. */
+  async record(ownerId: string, id: string) {
+    const r = await this.get(ownerId, id);
+    this.retain(r);
+    return r;
   }
 
-  consent(ownerId: string, id: string, givenBy: Consent["givenBy"]) {
-    const r = this.get(ownerId, id);
+  /** ¿Esta sesión es la que escucha alguna entrevista? (exime solo a esa sesión de la inactividad) */
+  isListeningSession(sessionId: string) {
+    for (const [id, s] of this.listeners) {
+      if (s.sessionId === sessionId && this.live.get(id)?.status === "escuchando") return true;
+    }
+    return false;
+  }
+
+  /** Sesiones que tienen una escucha activa (para revisarlas aunque no tengan canal abierto). */
+  listeningSessions(): AuthSession[] {
+    const out = new Map<string, AuthSession>();
+    for (const [id, s] of this.listeners) if (this.live.get(id)?.status === "escuchando") out.set(s.sessionId, s);
+    return [...out.values()];
+  }
+
+  /** Pausa solo las escuchas iniciadas o reanudadas por esta sesión. */
+  async pauseForSession(sessionId: string, reason: string) {
+    for (const [id, s] of [...this.listeners]) {
+      if (s.sessionId !== sessionId) continue;
+      const r = this.live.get(id);
+      if (!r || r.status !== "escuchando") continue;
+      this.applyCommand(r, "pausar", reason);
+      await this.commit(r).catch((e) => logError("pause_session", e));
+      this.releaseIfIdle(id);
+    }
+  }
+
+  async consent(ownerId: string, id: string, givenBy: Consent["givenBy"]) {
+    const r = await this.get(ownerId, id);
     this.requireEditable(r);
     if (givenBy !== "paciente" && givenBy !== "representante")
       throw new HttpError(400, "consentimiento_invalido", "Indica quién otorgó el consentimiento.");
     r.consent = { at: new Date().toISOString(), givenBy };
-    this.touch(r);
+    await this.commit(r);
     logEvent("consent_recorded");
-    this.broadcast(r);
     return this.snapshot(r);
   }
 
-  command(ownerId: string, id: string, cmd: Command, reason: string | null = null) {
-    const r = this.get(ownerId, id);
+  async command(ownerId: string, id: string, cmd: Command, reason: string | null = null, session?: AuthSession) {
+    const r = await this.get(ownerId, id);
     this.requireEditable(r);
+    this.retain(r);
     this.applyCommand(r, cmd, reason);
+    // La escucha queda ligada a la sesión que la inició o reanudó.
+    if ((cmd === "iniciar" || cmd === "reanudar") && session && r.status === "escuchando") this.listeners.set(r.id, session);
+    await this.commit(r);
+    this.releaseIfIdle(r.id);
     return this.snapshot(r);
   }
 
@@ -139,11 +221,7 @@ export class InterviewService {
     if (!allowed[cmd].includes(r.status))
       throw new HttpError(409, "estado_invalido", "Esa acción no está disponible en el estado actual.");
     if (cmd === "iniciar" && !r.consent)
-      throw new HttpError(
-        403,
-        "sin_consentimiento",
-        "Registra el consentimiento antes de activar la escucha.",
-      );
+      throw new HttpError(403, "sin_consentimiento", "Registra el consentimiento antes de activar la escucha.");
 
     if (cmd === "iniciar") {
       const src = new DemoSource(
@@ -152,9 +230,9 @@ export class InterviewService {
           onInterim: (speaker, text) => this.emit(r.id, "interim", { speaker, text }),
           onFinal: (seg) => {
             r.segments.push({ ...seg, id: `s${r.segments.length + 1}` });
-            for (const sp of new Set(r.segments.map((s) => s.speaker)))
-              r.speakerRoles[sp] ??= "sin_asignar";
-            this.touch(r);
+            for (const sp of new Set(r.segments.map((s) => s.speaker))) r.speakerRoles[sp] ??= "sin_asignar";
+            r.lastActivity = Date.now();
+            this.persist(r).catch((e) => logError("segment_save", e));
             this.broadcast(r);
           },
           onEnd: () => {
@@ -162,7 +240,10 @@ export class InterviewService {
               r.status = "detenida";
               r.pauseReason = null;
               this.sources.delete(r.id);
+              this.listeners.delete(r.id);
+              this.persist(r).catch((e) => logError("segment_save", e));
               this.broadcast(r);
+              this.releaseIfIdle(r.id);
             }
           },
         },
@@ -172,44 +253,69 @@ export class InterviewService {
       r.status = "escuchando";
       src.start();
     } else if (cmd === "pausar") {
+      this.listeners.delete(r.id);
       this.sources.get(r.id)?.pause();
       r.status = "pausada";
       r.pauseReason = reason;
     } else if (cmd === "reanudar") {
       r.status = "escuchando";
       r.pauseReason = null;
-      this.sources.get(r.id)?.resume();
+      if (this.sources.has(r.id)) this.sources.get(r.id)!.resume();
+      else {
+        // Tras un reinicio del servidor la fuente demo no existe: se detiene.
+        r.status = "detenida";
+      }
     } else {
+      this.listeners.delete(r.id);
       r.status = "detenida";
       r.pauseReason = null;
       const src = this.sources.get(r.id);
       this.sources.delete(r.id);
       src?.stop();
     }
-    this.touch(r);
     logEvent("interview_command", { cmd });
-    this.broadcast(r);
   }
 
-  setRole(ownerId: string, id: string, speaker: number, role: SpeakerRole) {
-    const r = this.get(ownerId, id);
+  async setRole(ownerId: string, id: string, speaker: number, role: SpeakerRole) {
+    const r = await this.get(ownerId, id);
     this.requireEditable(r);
     if (!ROLES.includes(role) || !(speaker in r.speakerRoles))
       throw new HttpError(400, "rol_invalido", "Hablante o rol no válido.");
     r.speakerRoles[speaker] = role;
-    this.touch(r);
-    this.broadcast(r);
+    await this.commit(r);
     return this.snapshot(r);
   }
 
-  /** Confirma un campo, opcionalmente con texto del profesional. */
-  confirmField(ownerId: string, id: string, fieldId: string, value: string | null) {
-    const r = this.get(ownerId, id);
+  private field(r: InterviewRecord, fieldId: string) {
+    if (!allFields(r.template).some((f) => f.id === fieldId))
+      throw new HttpError(400, "campo_invalido", "El campo no existe en la plantilla.");
+    return this.fields(r)[fieldId];
+  }
+
+  /** Autoguardado del texto que el profesional está escribiendo (no confirma). */
+  async saveDraft(ownerId: string, id: string, fieldId: string, value: string) {
+    const r = await this.get(ownerId, id);
     this.requireEditable(r);
-    const def = allFields(r.template).find((f) => f.id === fieldId);
-    if (!def) throw new HttpError(400, "campo_invalido", "El campo no existe en la plantilla.");
-    const current = this.fields(r)[fieldId];
-    if (value !== null && value.length > 5000)
+    this.field(r, fieldId);
+    if (value.length > MAX_TEXT) throw new HttpError(400, "texto_largo", "El texto supera 5.000 caracteres.");
+    const prev = r.prof[fieldId];
+    r.prof[fieldId] = {
+      confirmed: prev?.confirmed ?? false,
+      value: prev?.value ?? null,
+      edited: prev?.edited ?? false,
+      ackItemIds: prev?.ackItemIds ?? [],
+      draft: value,
+    };
+    await this.commit(r);
+    return { savedAt: new Date(r.lastActivity).toISOString() };
+  }
+
+  /** Confirma un campo, opcionalmente con texto del profesional. */
+  async confirmField(ownerId: string, id: string, fieldId: string, value: string | null) {
+    const r = await this.get(ownerId, id);
+    this.requireEditable(r);
+    const current = this.field(r, fieldId);
+    if (value !== null && value.length > MAX_TEXT)
       throw new HttpError(400, "texto_largo", "El texto supera 5.000 caracteres.");
     const text = value?.trim() || null;
     const finalText = text ?? current.professionalValue ?? current.proposedValue;
@@ -221,40 +327,36 @@ export class InterviewService {
       value: finalText,
       edited: Boolean(prev?.edited) || (text !== null && text !== current.proposedValue),
       ackItemIds: current.items.map((i) => i.id),
+      draft: null,
     };
-    this.touch(r);
-    this.broadcast(r);
+    await this.commit(r);
     return this.snapshot(r);
   }
 
-  markNotReported(ownerId: string, id: string, fieldId: string) {
-    const r = this.get(ownerId, id);
+  async markNotReported(ownerId: string, id: string, fieldId: string) {
+    const r = await this.get(ownerId, id);
     this.requireEditable(r);
-    if (!allFields(r.template).some((f) => f.id === fieldId))
-      throw new HttpError(400, "campo_invalido", "El campo no existe en la plantilla.");
-    const current = this.fields(r)[fieldId];
+    const current = this.field(r, fieldId);
     r.prof[fieldId] = {
       confirmed: true,
       value: "No referido",
       edited: true,
       ackItemIds: current.items.map((i) => i.id),
+      draft: null,
     };
-    this.touch(r);
-    this.broadcast(r);
+    await this.commit(r);
     return this.snapshot(r);
   }
 
-  finalize(ownerId: string, id: string, attested: boolean) {
-    const r = this.get(ownerId, id);
+  async finalize(ownerId: string, id: string, attested: boolean) {
+    const r = await this.get(ownerId, id);
     this.requireEditable(r);
     if (r.status !== "detenida")
       throw new HttpError(409, "escucha_activa", "Detén la escucha antes de finalizar.");
-    if (!attested)
-      throw new HttpError(400, "sin_revision", "Confirma que revisaste el borrador completo.");
+    if (!attested) throw new HttpError(400, "sin_revision", "Confirma que revisaste el borrador completo.");
     const fields = this.fields(r);
     const pending = Object.values(fields).filter((f) => f.status === "requiere_revision").length;
-    if (pending)
-      throw new HttpError(409, "revision_pendiente", `Quedan ${pending} campos que requieren revisión.`);
+    if (pending) throw new HttpError(409, "revision_pendiente", `Quedan ${pending} campos que requieren revisión.`);
     // Lo propuesto queda confirmado por la revisión explícita del profesional.
     for (const f of Object.values(fields)) {
       if (f.status === "propuesto")
@@ -263,30 +365,34 @@ export class InterviewService {
           value: f.proposedValue,
           edited: false,
           ackItemIds: f.items.map((i) => i.id),
+          draft: null,
         };
     }
     r.status = "finalizada";
     r.finalizedAt = Date.now();
-    this.touch(r);
+    await this.commit(r);
     logEvent("interview_finalized");
-    this.broadcast(r);
     return this.snapshot(r);
   }
 
-  delete(ownerId: string, id: string) {
-    const r = this.get(ownerId, id);
+  async delete(ownerId: string, id: string) {
+    const r = await this.get(ownerId, id);
+    this.listeners.delete(r.id);
     this.sources.get(r.id)?.stop();
     this.sources.delete(r.id);
-    this.store.deleteInterview(ownerId, id);
+    this.live.delete(r.id);
+    await this.writes.get(r.id)?.catch(() => undefined);
+    await this.store.deleteInterview(ownerId, id);
     this.closeSubscribers(id);
     logEvent("interview_deleted");
   }
 
   /** Elimina entrevistas vencidas según la retención de cada profesional. */
-  sweep() {
-    for (const id of this.store.sweep(Date.now())) {
+  async sweep() {
+    for (const id of await this.store.sweep(Date.now())) {
       this.sources.get(id)?.stop();
       this.sources.delete(id);
+      this.live.delete(id);
       this.closeSubscribers(id);
       logEvent("interview_expired");
     }
@@ -294,40 +400,50 @@ export class InterviewService {
 
   // ---- Eventos en vivo (Server-Sent Events) ----
 
-  subscribe(ownerId: string, id: string, res: ServerResponse) {
-    const r = this.get(ownerId, id);
+  async subscribe(ownerId: string, id: string, res: ServerResponse) {
+    const r = await this.get(ownerId, id);
+    this.retain(r);
     const set = this.subscribers.get(id) ?? new Set();
     set.add(res);
     this.subscribers.set(id, set);
     const t = this.disconnectTimers.get(id);
     if (t) clearTimeout(t);
     this.disconnectTimers.delete(id);
-    this.write(res, "snapshot", this.snapshot(r));
+    this.write(res, "snapshot", await this.snapshot(r));
     res.on("close", () => {
       set.delete(res);
-      if (set.size === 0) this.onAllDisconnected(ownerId, id);
+      if (set.size === 0) this.onAllDisconnected(id);
     });
   }
 
-  private onAllDisconnected(ownerId: string, id: string) {
-    const r = this.store.getInterview(ownerId, id);
-    if (!r || r.status !== "escuchando") return;
+  private onAllDisconnected(id: string) {
+    const r = this.live.get(id);
+    if (!r || r.status !== "escuchando") {
+      this.releaseIfIdle(id);
+      return;
+    }
     // Sin interfaz conectada no se sigue escuchando: pausa automática.
     const t = setTimeout(() => {
       this.disconnectTimers.delete(id);
-      const cur = this.store.getInterview(ownerId, id);
+      const cur = this.live.get(id);
       if (cur?.status === "escuchando" && !(this.subscribers.get(id)?.size ?? 0)) {
         this.applyCommand(cur, "pausar", "conexion");
+        this.commit(cur)
+          .catch((e) => logError("auto_pause", e))
+          .finally(() => this.releaseIfIdle(id));
       }
     }, this.config.disconnectPauseMs);
     this.disconnectTimers.set(id, t);
   }
 
+
+
   private broadcast(r: InterviewRecord) {
     const set = this.subscribers.get(r.id);
     if (!set?.size) return;
-    const snap = this.snapshot(r);
-    for (const res of set) this.write(res, "snapshot", snap);
+    void this.snapshot(r).then((snap) => {
+      for (const res of set) this.write(res, "snapshot", snap);
+    });
   }
 
   private emit(id: string, event: string, data: unknown) {
@@ -335,7 +451,7 @@ export class InterviewService {
   }
 
   private write(res: ServerResponse, event: string, data: unknown) {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
   private closeSubscribers(id: string) {
@@ -347,15 +463,18 @@ export class InterviewService {
   }
 
   heartbeat() {
-    for (const set of this.subscribers.values()) for (const res of set) res.write(": ping\n\n");
+    for (const set of this.subscribers.values()) for (const res of set) if (!res.writableEnded) res.write(": ping\n\n");
   }
 
-  shutdown() {
+  async shutdown() {
     for (const s of this.sources.values()) s.stop();
     for (const t of this.disconnectTimers.values()) clearTimeout(t);
-    for (const id of [...this.subscribers.keys()]) {
-      for (const res of this.subscribers.get(id) ?? []) res.end();
-    }
+    for (const id of [...this.subscribers.keys()]) for (const res of this.subscribers.get(id) ?? []) res.end();
     this.subscribers.clear();
+    await Promise.allSettled([...this.writes.values()]);
   }
+}
+
+function notFound() {
+  return new HttpError(404, "no_encontrada", "La entrevista no existe o fue eliminada.");
 }

@@ -12,7 +12,8 @@ import {
   type TemplateField,
 } from "../shared/types";
 import { api, ApiError } from "./api";
-import { DemoNotice, STATUS_TEXT } from "./App";
+import { DemoNotice, SaveIndicator, STATUS_TEXT } from "./App";
+import { registerFlush } from "./session";
 import { type Connection, useInterview } from "./useInterview";
 
 type Tab = "entrevista" | "anamnesis" | "finalizar";
@@ -68,6 +69,7 @@ export function InterviewScreen({
           Entrevistas
         </button>
         <div className="indicators" aria-live="polite">
+          <SaveIndicator />
           <ListeningIndicator status={snap.status} />
           <ConnectionIndicator conn={conn} />
         </div>
@@ -108,6 +110,7 @@ export function InterviewScreen({
         <section className="pane pane-anamnesis" aria-label="Borrador de anamnesis">
           <Draft
             snap={snap}
+            onDraft={(f, v) => api.saveDraft(id, f, v)}
             onEvidence={jumpTo}
             onConfirm={(f, v) => run(api.confirm(id, f, v))}
             onNotReported={(f) => run(api.notReported(id, f))}
@@ -383,11 +386,13 @@ function StatusChip({ status }: { status: FieldState["status"] }) {
 
 function Draft({
   snap,
+  onDraft,
   onEvidence,
   onConfirm,
   onNotReported,
 }: {
   snap: InterviewSnapshot;
+  onDraft: (fieldId: string, value: string) => Promise<unknown>;
   onEvidence: (segId: string) => void;
   onConfirm: (fieldId: string, value: string | null) => void;
   onNotReported: (fieldId: string) => void;
@@ -407,6 +412,7 @@ function Draft({
               field={f}
               state={snap.fields[f.id]}
               locked={snap.status === "finalizada"}
+              onDraft={(v) => onDraft(f.id, v)}
               onEvidence={onEvidence}
               onConfirm={(v) => onConfirm(f.id, v)}
               onNotReported={() => onNotReported(f.id)}
@@ -422,6 +428,7 @@ function FieldRow({
   field,
   state,
   locked,
+  onDraft,
   onEvidence,
   onConfirm,
   onNotReported,
@@ -429,6 +436,7 @@ function FieldRow({
   field: TemplateField;
   state: FieldState;
   locked: boolean;
+  onDraft: (value: string) => Promise<unknown>;
   onEvidence: (segId: string) => void;
   onConfirm: (value: string | null) => void;
   onNotReported: () => void;
@@ -436,6 +444,46 @@ function FieldRow({
   const [editing, setEditing] = useState(false);
   const shown = state.professionalValue ?? state.proposedValue ?? "No referido";
   const [text, setText] = useState(shown);
+  const [draftState, setDraftState] = useState<"" | "guardando" | "guardado" | "error">("");
+  const pending = useRef<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Autoguardado del texto en edición: «Guardado» solo con respuesta del servidor.
+  const flush = async () => {
+    if (timer.current) clearTimeout(timer.current);
+    const v = pending.current;
+    if (v === null) return;
+    pending.current = null;
+    setDraftState("guardando");
+    try {
+      await onDraft(v);
+      setDraftState("guardado");
+    } catch (e) {
+      pending.current = pending.current ?? v;
+      setDraftState("error");
+      throw e;
+    }
+  };
+  useEffect(() => {
+    if (!editing) return;
+    const un = registerFlush(flush);
+    return () => {
+      un();
+      void flush().catch(() => undefined);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
+  const changeText = (v: string) => {
+    setText(v);
+    pending.current = v;
+    setDraftState("");
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => void flush().catch(() => undefined), 1200);
+  };
+  const startEdit = () => {
+    setText(state.draftValue ?? (shown === "No referido" ? "" : shown));
+    setEditing(true);
+  };
   const newItems = state.items.filter((i) => state.newItemIds.includes(i.id));
   const oldItems = state.items.filter((i) => !state.newItemIds.includes(i.id));
 
@@ -452,7 +500,16 @@ function FieldRow({
           <label className="sr-only" htmlFor={`t-${field.id}`}>
             Texto para {field.label}
           </label>
-          <textarea id={`t-${field.id}`} value={text} rows={4} onChange={(e) => setText(e.target.value)} />
+          <textarea id={`t-${field.id}`} value={text} rows={4} onChange={(e) => changeText(e.target.value)} />
+          <p className={`draft-state ds-${draftState}`} aria-live="polite">
+            {draftState === "guardando"
+              ? "Guardando borrador…"
+              : draftState === "guardado"
+                ? "Borrador guardado en el servidor (aún sin confirmar)"
+                : draftState === "error"
+                  ? "Error al guardar el borrador: lo que no llegó al servidor puede perderse."
+                  : ""}
+          </p>
           <div className="actions">
             <button className="btn small" onClick={() => setEditing(false)}>
               Cancelar
@@ -460,6 +517,8 @@ function FieldRow({
             <button
               className="btn small primary"
               onClick={() => {
+                if (timer.current) clearTimeout(timer.current);
+                pending.current = null;
                 onConfirm(text);
                 setEditing(false);
               }}
@@ -475,6 +534,9 @@ function FieldRow({
         </p>
       )}
 
+      {!editing && state.draftValue !== null && (
+        <p className="draft-state">Tienes un borrador sin confirmar guardado en el servidor. Toca Editar para continuarlo.</p>
+      )}
       {state.reasons.length > 0 && (
         <ul className="reasons">
           {state.reasons.map((r) => (
@@ -518,10 +580,7 @@ function FieldRow({
           )}
           <button
             className="btn small"
-            onClick={() => {
-              setText(shown === "No referido" ? "" : shown);
-              setEditing(true);
-            }}
+            onClick={startEdit}
           >
             Editar
           </button>
@@ -536,10 +595,7 @@ function FieldRow({
         <div className="actions">
           <button
             className="btn small"
-            onClick={() => {
-              setText(shown === "No referido" ? "" : shown);
-              setEditing(true);
-            }}
+            onClick={startEdit}
           >
             Escribir
           </button>
@@ -683,8 +739,9 @@ function Review({
 
       <h2>Eliminar</h2>
       <p className="muted small">
-        Se elimina automáticamente el {new Date(snap.expiresAt).toLocaleString("es-CL")} si no hay
-        actividad.
+        {snap.autoDeleteAt
+          ? `Según tu configuración, se eliminará del servidor el ${new Date(snap.autoDeleteAt).toLocaleString("es-CL")} si no hay actividad.`
+          : "Queda guardada en tu cuenta: no se elimina automáticamente."}
       </p>
       <button className="btn danger" onClick={onDelete}>
         Eliminar entrevista ahora

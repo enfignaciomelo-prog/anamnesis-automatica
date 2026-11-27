@@ -11,26 +11,30 @@
     "dev": "vite",
     "dev:server": "tsx watch server/index.ts",
     "build": "vite build && npm run build:server",
-    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=build/server.js",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=build/server.js && rm -rf build/migrations && cp -r server/real/migrations build/migrations",
     "build:web:offline": "node scripts/build-web-offline.mjs",
     "start": "node build/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
     "test": "node --import tsx --test tests/unit/*.test.ts",
-    "test:e2e": "python3 .claude/skills/webapp-testing/scripts/with_server.py --server \"exec env DEMO_SPEED=20 PORT=4173 node --import tsx server/index.ts\" --port 4173 -- python3 tests/e2e/run_all.py",
-    "fixtures": "python3 scripts/make-fixtures.py"
+    "test:e2e": "python3 .claude/skills/webapp-testing/scripts/with_server.py --server \"exec env DEMO_SPEED=20 ALLOW_TEST_CLOCK=true PORT=4173 node --import tsx server/index.ts\" --port 4173 -- python3 tests/e2e/run_all.py",
+    "fixtures": "python3 scripts/make-fixtures.py",
+    "typecheck:offline": "tsc -p tsconfig.offline.json --noEmit"
   },
   "dependencies": {
+    "better-auth": "1.7.28",
     "docx": "9.8.1",
     "jszip": "3.10.1",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.2.108",
+    "pg": "8.23.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "26.6.3",
+    "@types/pg": "8.23.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "6.3.0",

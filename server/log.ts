@@ -22,5 +22,8 @@ export function logEvent(event: string, extra: Record<string, string | number | 
 export function logError(where: string, err: unknown) {
   const name = err instanceof Error ? err.name : typeof err;
   const code = (err as { code?: unknown })?.code;
+  // En pruebas se puede ver el mensaje técnico (nunca en producción: podría contener datos).
+  if (process.env.LOG_ERROR_DETAIL === "1" && err instanceof Error)
+    sink(JSON.stringify({ t: new Date().toISOString(), event: "error_detail", where, message: err.message.slice(0, 300) }));
   sink(JSON.stringify({ t: new Date().toISOString(), event: "error", where, name, code: String(code ?? "") }));
 }

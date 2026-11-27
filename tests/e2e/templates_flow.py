@@ -83,7 +83,7 @@ def main() -> int:
         # Entrevista con la plantilla Word importada.
         page.get_by_role("button", name="Plantillas").click()
         page.get_by_role("button", name="Entrevistas").click()
-        page.get_by_label("Plantilla para la nueva entrevista").select_option(label="Ficha de ingreso DEMO (v2)")
+        page.get_by_label("Plantilla para la nueva anamnesis").select_option(label="Ficha de ingreso DEMO (v2)")
         page.get_by_role("button", name="Nueva entrevista").click()
         page.get_by_role("button", name="Iniciar escucha").click()
         page.get_by_label("Informé lo anterior y la persona aceptó.").check()
@@ -119,7 +119,7 @@ def main() -> int:
 
         assert not errors, errors
         browser.close()
-    print("E2E OK: plantillas propias (Word y Excel) en tamaño iPhone")
+    print("E2E OK: plantillas propias Word y Excel (emulación Chromium tamaño iPhone, no Safari real)")
     return 0
 
 

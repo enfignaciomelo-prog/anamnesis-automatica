@@ -144,7 +144,7 @@ def main() -> int:
         pb = ctx_b.new_page()
         pb.goto(BASE)
         pb.get_by_role("button", name="Entrar como Profesional Demo B").click()
-        expect(pb.get_by_text("Aún no tienes entrevistas")).to_be_visible()
+        expect(pb.get_by_text("No hay anamnesis con estos filtros.")).to_be_visible()
         ctx_b.close()
 
         # Computador: transcripción y borrador lado a lado.
@@ -160,7 +160,7 @@ def main() -> int:
 
         assert not errors, errors
         browser.close()
-    print("E2E OK: flujo de demostración completo en tamaño iPhone y computador")
+    print("E2E OK: flujo de demostración completo (emulación Chromium tamaño iPhone y computador, no Safari real)")
     return 0
 
 
