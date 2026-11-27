@@ -135,6 +135,10 @@ describe("borradores cifrados en el dispositivo", () => {
     assert.ok(accepted);
     assert.ok(rejected?.reason instanceof StaleDraftError);
     assert.equal((await v.draft(d.id))?.fields.motivo, accepted.value.fields.motivo);
+    const copy = await v.asNewCopy(d.id, { motivo: "DEMO conservado en una copia" });
+    assert.notEqual(copy.id, d.id);
+    assert.equal((await v.draft(d.id))?.fields.motivo, accepted.value.fields.motivo);
+    assert.equal((await v.draft(copy.id))?.fields.motivo, "DEMO conservado en una copia");
   });
 
   it("una pestaña con la clave abierta no recrea un espacio ya eliminado", async () => {

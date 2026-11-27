@@ -281,7 +281,7 @@ export class OfflineVault {
     const current = await this.readDraft(id);
     if (!current) throw new Error("El borrador ya no existe en este dispositivo.");
     const { draft: cur, row } = current;
-    if (cur.stub) throw new Error("Este borrador ya se sincronizó: edítalo en Mis anamnesis.");
+    if (cur.stub) throw new StaleDraftError(cur);
     if (cur.revision !== baseRevision) throw new StaleDraftError(cur);
     for (const v of Object.values(fields))
       if (v.length > OFFLINE_MAX_TEXT) throw new Error("Un campo supera 5.000 caracteres.");
@@ -307,7 +307,7 @@ export class OfflineVault {
   }
 
   /** Resolución explícita de un conflicto: el borrador se enviará como anamnesis nueva. */
-  async asNewCopy(id: string) {
+  async asNewCopy(id: string, unsavedFields?: Record<string, string>) {
     const cur = await this.draft(id);
     if (!cur) throw new Error("El borrador ya no existe en este dispositivo.");
     const next: LocalDraft = {
@@ -319,9 +319,10 @@ export class OfflineVault {
       error: null,
       conflict: null,
       title: `${cur.title} (copia)`,
+      ...(unsavedFields && { fields: unsavedFields, stub: false }),
     };
     await this.write(draftKey(next.id), next);
-    await this.b.deleteRecord(this.space.spaceId, draftKey(id));
+    if (!unsavedFields) await this.b.deleteRecord(this.space.spaceId, draftKey(id));
     return next;
   }
 
@@ -394,7 +395,7 @@ export class OfflineVault {
 
 export class StaleDraftError extends Error {
   constructor(public current: LocalDraft) {
-    super("Este borrador cambió en otra pestaña. Se cargó la versión más reciente.");
+    super("Este borrador cambió en otra pestaña. Tus cambios siguen abiertos en este editor.");
     this.name = "StaleDraftError";
   }
 }

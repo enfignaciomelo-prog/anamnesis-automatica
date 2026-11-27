@@ -120,5 +120,5 @@ lógica de demostración) · ⏳ Pendiente (no existe aún)
 | Corte diario | ✅ / límite | «Los borradores guardados solo en este dispositivo se eliminan en el corte diario, aunque no se hayan sincronizado.» Aviso 5 minutos antes (intenta sincronizar), eliminación al llegar el corte con la app abierta, y al reabrir antes de mostrar nada. También si el reloj del equipo retrocede. Con la app cerrada no se puede borrar en el momento exacto. |
 | Cerrar sesión | ✅ | Conserva los borradores cifrados hasta el corte (para no perder trabajo hecho sin conexión); se pueden eliminar a mano. |
 | Abrir la app sin conexión | ✅ | El service worker precarga la app; sin servidor se ofrece desbloquear los borradores del dispositivo. |
-| Guardado en varias pestañas | ✅ | IndexedDB confirma la revisión que se está editando y rechaza la segunda escritura concurrente. Los guardados tardíos no recrean espacios eliminados. |
+| Guardado en varias pestañas | ✅ | IndexedDB confirma la revisión que se está editando y rechaza la segunda escritura concurrente. El editor conserva el texto y permite guardarlo como copia. Los guardados tardíos no recrean espacios eliminados. |
 | Voz e IA sin conexión | ⏳ Evaluación | Ver `docs/VOZ_IA_OFFLINE.md`. No implementado. |
